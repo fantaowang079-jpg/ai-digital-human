@@ -1,7 +1,7 @@
 @echo off
-cd /d E:\digital-human
+cd /d "%~dp0"
 echo Starting AI Digital Human server...
-start "AI Digital Human Server" cmd /k "cd /d E:\digital-human && .venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000"
+start "AI Digital Human Server" cmd /k "cd /d "%~dp0" && .venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000"
 timeout /t 5 /nobreak >nul
 start "" http://localhost:8000
 echo.

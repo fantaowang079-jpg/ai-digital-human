@@ -1,6 +1,6 @@
 # AI 数字人对话系统
 
-> 一个从零实现的精简 AI 数字人：**听 → 想 → 说 → 动** 全链路可运行，代码全部自研，可插拔架构，不依赖高端 GPU。
+> 一个从零实现的精简 AI 数字人：**听 → 想 → 说 → 动** 全链路可运行。编排层与前端为自研实现，底层调用 DeepSeek（LLM）、Edge-TTS（语音合成）与 Faster-Whisper（语音识别），可插拔架构，不依赖高端 GPU。
 
 前端展示一个 2D 数字人形象，支持**文字或语音**输入：后端调用大模型**流式**生成回复，按句合成语音并逐句返回，网页端边接收边播放，用音频实时驱动数字人的「嘴巴」做口型动画。
 
@@ -51,12 +51,30 @@ pip install -r requirements.txt
 cp .env.example .env
 
 # 4. 启动
-uvicorn backend.main:app --host 0.0.0.0 --port 8000
+uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
 浏览器打开 <http://localhost:8000>，输入文字即可看到数字人张嘴回复。
 
 > **想接入真实大模型**：编辑 `.env`，把 `LLM_PROVIDER=deepseek` 并填入 `DEEPSEEK_API_KEY`，重启即可。
+>
+> **首次语音识别**会通过 hf-mirror 下载 Faster-Whisper `base` 模型（约 150MB），请耐心等待；
+> 之后复用本地缓存，不再联网。
+
+### 安全说明
+
+本项目是本地演示，**没有鉴权**。`--host 0.0.0.0` 会把对话接口和你的 API Key 额度暴露给局域网，
+默认请用 `--host 127.0.0.1`；需要公网部署时请在前面加鉴权与限流。
+
+### 运行测试
+
+```bash
+pip install pytest httpx
+pytest -q
+```
+
+测试用 fake pipeline 覆盖流式协议：正常逐句事件、生成中途异常必须变成 `error` 事件、
+请求体角色/长度校验、STT 非法音频返回 4xx。
 
 ## 📁 目录结构
 
@@ -68,9 +86,11 @@ digital-human/
 │   ├── config.py           # 配置管理
 │   └── providers/          # 可插拔 Provider 层
 │       ├── llm.py          #   MockLLMProvider / DeepSeekProvider
-│       └── tts.py          #   EdgeTTSProvider
+│       ├── tts.py          #   EdgeTTSProvider
+│       └── stt.py          #   FasterWhisperSTTProvider
 ├── frontend/
 │   └── index.html          # 数字人形象 + 口型动画 + 对话界面
+├── tests/                  # 流式协议与请求校验回归测试
 ├── requirements.txt
 └── .env.example
 ```

@@ -243,21 +243,28 @@
     }
 
     function enqueueAudio(b64) {
+      if (!b64) return;
       audioQueue.push(b64);
-      if (!isPlaying) playNextInQueue();
+      if (!isPlaying) playNextInQueue().catch(e => console.warn("playback failed", e));
     }
 
     async function playNextInQueue() {
-      if (audioQueue.length === 0) {
+      isPlaying = true;
+      try {
+        while (audioQueue.length > 0) {
+          const b64 = audioQueue.shift();
+          setStatus("speaking", "正在说话…");
+          // 单句解码/播放失败不能让整个队列卡死
+          try {
+            await playAudio(b64);
+          } catch (e) {
+            console.warn("audio sentence failed", e);
+          }
+        }
+      } finally {
         isPlaying = false;
         maybeRestartListening();
-        return;
       }
-      isPlaying = true;
-      const b64 = audioQueue.shift();
-      setStatus("speaking", "正在说话…");
-      await playAudio(b64);
-      playNextInQueue();
     }
 
     function animateMouth() {
@@ -284,19 +291,29 @@
 
     // 流式发送：逐句接收后端返回，边显示文字边入队播放音频
     async function send() {
+      if (isStreaming) return;   // 防止 Enter / 连点造成两条并发流
       const text = input.value.trim();
       if (!text) return;
+
+      // 对话模式正在录音时改用打字：先停止并丢弃录音，避免把助手语音当成用户输入
+      if (isRecording) {
+        discardOnStop = true;
+        stopRecordingNow();
+      }
+
       input.value = "";
       addBubble(text, "user");
       messages.push({ role: "user", content: text });
 
       sendBtn.disabled = true;
+      input.disabled = true;
       if (!conversationMode) micBtn.disabled = true;
       isStreaming = true;
       setStatus("thinking", "正在思考…");
 
       const bubble = addBubble("", "assistant");
       let fullText = "";
+      let failed = false;
 
       try {
         const resp = await fetch("/api/chat/stream", {
@@ -305,6 +322,7 @@
           body: JSON.stringify({ messages }),
         });
         if (!resp.ok) throw new Error(await resp.text());
+        if (!resp.body) throw new Error("流式响应为空");
 
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
@@ -318,21 +336,35 @@
           for (const line of lines) {
             if (!line.trim()) continue;
             const chunk = JSON.parse(line);
-            fullText += chunk.text;
+            if (chunk.type === "error") {
+              throw new Error(chunk.message || "生成失败，请稍后重试");
+            }
+            if (chunk.type && chunk.type !== "sentence") continue;
+            fullText += chunk.text || "";
             bubble.textContent = fullText;
             chatBox.scrollTop = chatBox.scrollHeight;
             enqueueAudio(chunk.audio_base64);
           }
         }
+        if (!fullText.trim()) throw new Error("没有收到回复");
         messages.push({ role: "assistant", content: fullText });
       } catch (e) {
-        bubble.textContent = "出错了：" + e.message;
+        failed = true;
+        // 本轮失败：撤回刚加入的用户消息，避免下一轮把失败的问题重复发送
+        const last = messages[messages.length - 1];
+        if (last && last.role === "user" && last.content === text) messages.pop();
+        input.value = text;            // 还原输入，方便直接重试
+        audioQueue.length = 0;         // 丢弃尚未播放的后续音频
+        bubble.textContent = fullText
+          ? fullText + "【生成中断】" + (e.message || "请稍后重试")
+          : "出错了：" + (e.message || "请稍后重试");
         setStatus("", "待机中");
       } finally {
         sendBtn.disabled = false;
+        input.disabled = false;
         if (!conversationMode) micBtn.disabled = false;
         isStreaming = false;
-        maybeRestartListening();
+        if (!failed) maybeRestartListening();
       }
     }
 
