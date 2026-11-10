@@ -231,7 +231,7 @@
     <details class="kb-card" id="kbCard">
       <summary>📚 知识库<span class="kb-badge" id="kbBadge">加载中…</span></summary>
       <div class="kb-body">
-        <div class="kb-drop" id="kbDrop">点击或拖拽文件到这里上传<br />支持 txt / md / csv / pdf / docx</div>
+        <div class="kb-drop" id="kbDrop">点击或拖拽文件到这里上传<br />支持 txt / md / csv / pdf / docx<br />整个文件夹也可直接放进 knowledge/ 目录</div>
         <input type="file" id="kbFile" accept=".txt,.md,.markdown,.csv,.pdf,.docx" multiple hidden />
         <div class="kb-list" id="kbList"></div>
       </div>
@@ -319,7 +319,7 @@
     // ---------------- 知识库面板 ----------------
     async function loadKb() {
       try {
-        const r = await fetch("/api/kb");
+        const r = await fetch("/api/kb", { cache: "no-store" });
         const d = await r.json();
         if (!d.enabled) {
           kbBadge.textContent = "未启用";
@@ -410,8 +410,10 @@
 
     kbDrop.addEventListener("click", () => kbFile.click());
     kbFile.addEventListener("change", () => {
-      uploadKbFiles(kbFile.files);
+      // 先拷贝成数组再清空 input，否则清空后 FileList 会被清掉，多选时只传第一个
+      const files = Array.from(kbFile.files || []);
       kbFile.value = "";   // 允许重复上传同一个文件
+      uploadKbFiles(files);
     });
     kbDrop.addEventListener("dragover", e => {
       e.preventDefault();
@@ -421,7 +423,7 @@
     kbDrop.addEventListener("drop", e => {
       e.preventDefault();
       kbDrop.classList.remove("dragover");
-      uploadKbFiles(e.dataTransfer.files);
+      uploadKbFiles(Array.from(e.dataTransfer.files || []));
     });
     loadKb();
 

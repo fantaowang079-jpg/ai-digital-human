@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import logging
 import math
 import os
@@ -31,14 +32,30 @@ logger = logging.getLogger("digital_human.knowledge")
 
 SUPPORTED_EXTS = {".txt", ".md", ".markdown", ".csv", ".pdf", ".docx"}
 MAX_FILE_BYTES = 10 * 1024 * 1024
+CACHE_FILENAME = ".kb_cache.json"
+CACHE_VERSION = 1
 
 # 一次匹配一个「中文连续段」或「英文/数字/下划线标识符」
 _TOKEN_RUN = re.compile(r"[一-鿿]+|[A-Za-z0-9_]+")
 _CJK_RUN = re.compile(r"[一-鿿]+")
 _ALNUM_PARTS = re.compile(r"[A-Za-z]+|[0-9]+")
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+
+# 查询侧停用词：疑问词/功能词不参与匹配，避免「是什么」「怎么办」误命中无关标题
+_STOPWORDS = {
+    "什么", "是什", "么是", "怎么", "么办", "为什", "如何", "为何", "哪些", "哪个",
+    "哪几", "有哪", "多少", "是否", "可以", "一下", "这个", "那个", "这些", "那些",
+    "这种", "那种", "请问", "帮我", "告诉", "我们", "你们", "他们", "它们", "然后",
+    "那么", "如果", "因为", "所以", "但是", "而且", "还是", "就是", "没有", "需要",
+    "应该", "可能", "一些", "时候", "现在", "以及", "关于", "对于", "通过", "进行",
+    "一个", "的是", "了的", "怎样", "么样", "是不", "不是", "了吗", "么了", "么回",
+}
+
+# 检索词覆盖率下限：命中的查询词权重至少要占问题总权重的 25%
+_MIN_QUERY_COVERAGE = 0.25
 
 
-def tokenize(text: str) -> list[str]:
+def tokenize(text: str, drop_stopwords: bool = False) -> list[str]:
     """把文本切成检索词：中文用相邻二元组（单字段保留单字），英文数字按词。
 
     例：「数字人 RAG」-> ["数字", "字人", "rag"]
@@ -57,75 +74,89 @@ def tokenize(text: str) -> list[str]:
             parts = _ALNUM_PARTS.findall(run)
             if len(parts) > 1:
                 tokens.extend(parts)
+    if drop_stopwords:
+        tokens = [t for t in tokens if t not in _STOPWORDS]
     return tokens
 
 
 def split_text(text: str, chunk_size: int = 420, overlap: int = 60) -> list[str]:
-    """按空行分段，再合并/切分成不超过 chunk_size 的片段。"""
+    """按 Markdown 标题划分章节，再把每节正文切成不超过 chunk_size 的片段。
+
+    每个片段都带上标题路径（如「## MySQL系列 / ### MySQL的索引」），
+    纯标题章节（例如只有问题列表、没有答案的题库）也会各自成为一段，
+    避免连续标题互相覆盖导致内容丢失。
+    """
     if chunk_size <= 0:
         raise ValueError("chunk_size 必须大于 0")
     overlap = max(0, min(overlap, chunk_size // 2))
+
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[ \t]+\n", "\n", text)
+    # PDF 常见「剧  情  文  库」这种字间空格，会把中文二元组打散，先合并
+    text = re.sub(r"(?<=[一-鿿])[ \t　]+(?=[一-鿿])", "", text)
+    # 让「标题紧跟正文、中间没有空行」的情况也能把标题单独拆出来
+    text = re.sub(r"(?m)^(#{1,6}\s+.*)$", r"\1\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     if not text:
         return []
 
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
-    chunks: list[str] = []
-    buf = ""
-    pending_heading = ""
+
+    # 先按标题层级切成 (标题路径, 正文段落列表) 的章节
+    sections: list[tuple[list[str], list[str]]] = []
+    heading_stack: list[tuple[int, str]] = []
+    body: list[str] = []
 
     for para in paragraphs:
-        # Markdown 标题：结束上一段，并和下一段正文绑在一起，避免标题单独成块
-        if para.startswith("#") and len(para) <= 80:
-            if buf:
-                chunks.append(buf)
-                buf = ""
-            pending_heading = para
-            continue
-        if pending_heading:
-            para = f"{pending_heading}\n{para}"
-            pending_heading = ""
-
-        if len(para) > chunk_size:
-            if buf:
-                chunks.append(buf)
-                buf = ""
-            chunks.extend(_split_long(para, chunk_size, overlap))
-            continue
-
-        candidate = f"{buf}\n\n{para}" if buf else para
-        if len(candidate) <= chunk_size:
-            buf = candidate
+        match = _HEADING_RE.match(para)
+        if match:
+            if heading_stack or body:
+                sections.append(([h for _, h in heading_stack], body))
+            level = len(match.group(1))
+            while heading_stack and heading_stack[-1][0] >= level:
+                heading_stack.pop()
+            heading_stack.append((level, para.strip()))
+            body = []
         else:
-            if buf:
-                chunks.append(buf)
-            buf = para
+            body.append(para)
 
-    if pending_heading:
-        chunks.append(pending_heading)
-    if buf:
-        chunks.append(buf)
+    if heading_stack or body:
+        sections.append(([h for _, h in heading_stack], body))
+
+    chunks: list[str] = []
+    for headings, body_paras in sections:
+        prefix = "\n".join(headings)
+        body_text = "\n\n".join(body_paras).strip()
+        if body_text:
+            content = f"{prefix}\n\n{body_text}" if prefix else body_text
+            chunks.extend(_split_long(content, chunk_size, overlap))
+        elif prefix:
+            # 纯标题章节：标题本身就是检索内容（常见于题库/大纲）
+            chunks.append(prefix)
     return [c.strip() for c in chunks if c.strip()]
 
 
 def _split_long(text: str, chunk_size: int, overlap: int) -> list[str]:
-    """超长段落先按句末标点切句，再对仍然超长的句子做硬切（带重叠）。"""
-    sentences = [s.strip() for s in re.split(r"(?<=[。！？!?；;\n])", text) if s.strip()]
+    """超长章节先按句末标点/换行切句，再对仍然超长的句子做硬切（带重叠）。
+
+    切句时保留结尾的标点和换行，避免问答内容被粘成一团。
+    """
+    sentences = re.findall(r"[^。！？!?；;\n]+[。！？!?；;\n]?", text)
     chunks: list[str] = []
     buf = ""
     for sent in sentences:
+        if not sent.strip():
+            continue
         while len(sent) > chunk_size:
             chunks.append(sent[:chunk_size])
             sent = sent[chunk_size - overlap :]
         if len(buf) + len(sent) <= chunk_size:
             buf += sent
         else:
-            if buf:
+            if buf.strip():
                 chunks.append(buf)
             buf = sent
-    if buf:
+    if buf.strip():
         chunks.append(buf)
     return chunks
 
@@ -240,19 +271,97 @@ class KnowledgeBase:
         self._chunks: list[Chunk] = []
         self._idf: dict[str, float] = {}
         self._signature: tuple = ()
+        # 解析缓存：{相对路径: ((mtime_ns, size), 切片列表, 错误信息)}
+        # 内存缓存避免重复解析；同时持久化到磁盘，重启后直接复用解析结果
+        self._cache: dict[str, tuple[tuple[int, int], list[str], str | None]] = (
+            self._load_cache()
+        )
         self.refresh(force=True)
 
     # ---------------------------------------------------------------- 索引
     def _scan_signature(self) -> tuple:
+        """递归扫描知识库目录，返回 (相对路径, mtime, size) 列表。"""
         entries = []
-        for entry in os.scandir(self.root):
-            if not entry.is_file() or entry.name.startswith("."):
-                continue
-            if os.path.splitext(entry.name)[1].lower() not in SUPPORTED_EXTS:
-                continue
-            stat = entry.stat()
-            entries.append((entry.name, stat.st_mtime_ns, stat.st_size))
+        for dirpath, dirnames, filenames in os.walk(self.root):
+            dirnames[:] = sorted(
+                d for d in dirnames if not d.startswith(".") and d != "__pycache__"
+            )
+            for filename in filenames:
+                if filename.startswith("."):
+                    continue
+                if os.path.splitext(filename)[1].lower() not in SUPPORTED_EXTS:
+                    continue
+                path = os.path.join(dirpath, filename)
+                try:
+                    stat = os.stat(path)
+                except OSError:  # 扫描期间文件被删除
+                    continue
+                rel = os.path.relpath(path, self.root).replace(os.sep, "/")
+                entries.append((rel, stat.st_mtime_ns, stat.st_size))
         return tuple(sorted(entries))
+
+    @property
+    def _cache_path(self) -> str:
+        return os.path.join(self.root, CACHE_FILENAME)
+
+    def _load_cache(self) -> dict:
+        """从磁盘加载上次的解析结果；文件没变就不必重新解析 PDF。"""
+        if not os.path.exists(self._cache_path):
+            return {}
+        try:
+            with open(self._cache_path, encoding="utf-8") as fh:
+                payload = json.load(fh)
+            if (
+                payload.get("version") != CACHE_VERSION
+                or payload.get("chunk_size") != self.chunk_size
+                or payload.get("overlap") != self.overlap
+            ):
+                logger.info("知识库缓存版本或切片参数不匹配，忽略旧缓存")
+                return {}
+            cache = {}
+            for rel, item in payload.get("documents", {}).items():
+                pieces = item.get("chunks")
+                if not isinstance(pieces, list) or not all(
+                    isinstance(piece, str) for piece in pieces
+                ):
+                    continue
+                cache[rel] = (
+                    (int(item["mtime_ns"]), int(item["size"])),
+                    pieces,
+                    item.get("error"),
+                )
+            logger.info("知识库解析缓存已加载：%d 篇文档", len(cache))
+            return cache
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            logger.warning("知识库缓存读取失败，将重新解析：%s", exc)
+            return {}
+
+    def _save_cache(self) -> None:
+        payload = {
+            "version": CACHE_VERSION,
+            "chunk_size": self.chunk_size,
+            "overlap": self.overlap,
+            "documents": {
+                rel: {
+                    "mtime_ns": meta[0][0],
+                    "size": meta[0][1],
+                    "chunks": meta[1],
+                    "error": meta[2],
+                }
+                for rel, meta in self._cache.items()
+            },
+        }
+        tmp = self._cache_path + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=False)
+            os.replace(tmp, self._cache_path)
+        except OSError as exc:
+            logger.warning("知识库缓存写入失败：%s", exc)
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
     def refresh(self, force: bool = False) -> None:
         """扫描目录，文件有变化时重建索引（线程安全，可重复调用）。"""
@@ -263,38 +372,56 @@ class KnowledgeBase:
 
             docs: dict[str, Document] = {}
             chunks: list[Chunk] = []
-            for name, mtime_ns, size in signature:
-                path = os.path.join(self.root, name)
-                doc_id = hashlib.sha1(name.encode("utf-8")).hexdigest()[:16]
+            new_cache: dict[str, tuple[tuple[int, int], list[str], str | None]] = {}
+            seen_texts: set[str] = set()  # 同一份文档重复放两份时不要重复索引
+            for rel, mtime_ns, size in signature:
+                path = os.path.join(self.root, *rel.split("/"))
+                doc_id = hashlib.sha1(rel.encode("utf-8")).hexdigest()[:16]
                 doc = Document(
                     doc_id=doc_id,
-                    name=name,
+                    name=rel,
                     path=path,
                     size=size,
                     mtime_ns=mtime_ns,
                 )
-                try:
-                    with open(path, "rb") as fh:
-                        data = fh.read()
-                    text = extract_text(name, data)
-                    pieces = split_text(text, self.chunk_size, self.overlap)
-                    if not pieces:
-                        raise ValueError("文件里没有可用的文字")
-                    for i, piece in enumerate(pieces):
-                        chunks.append(
-                            Chunk(
-                                doc_id=doc_id,
-                                source=name,
-                                index=i,
-                                text=piece,
-                                weights=Counter(tokenize(piece)),
-                            )
+
+                cached = self._cache.get(rel)
+                if cached is not None and cached[0] == (mtime_ns, size):
+                    pieces, error = cached[1], cached[2]
+                else:
+                    pieces, error = [], None
+                    try:
+                        with open(path, "rb") as fh:
+                            data = fh.read()
+                        text = extract_text(rel, data)
+                        pieces = split_text(text, self.chunk_size, self.overlap)
+                        if not pieces:
+                            raise ValueError("文件里没有可用的文字")
+                        logger.info("知识库解析文档：%s（%d 段）", rel, len(pieces))
+                    except Exception as exc:  # 单个文件失败不影响其它文档
+                        error = str(exc)
+                        pieces = []
+                        logger.warning("知识库文档解析失败 %s: %s", rel, exc)
+                new_cache[rel] = ((mtime_ns, size), pieces, error)
+
+                doc.chunks = len(pieces)
+                doc.error = error
+                for i, piece in enumerate(pieces):
+                    if piece in seen_texts:
+                        continue
+                    seen_texts.add(piece)
+                    chunks.append(
+                        Chunk(
+                            doc_id=doc_id,
+                            source=rel,
+                            index=i,
+                            text=piece,
+                            weights=Counter(tokenize(piece)),
                         )
-                    doc.chunks = len(pieces)
-                except Exception as exc:  # 单个文件失败不影响其它文档
-                    doc.error = str(exc)
-                    logger.warning("知识库文档解析失败 %s: %s", name, exc)
+                    )
                 docs[doc_id] = doc
+
+            self._cache = new_cache
 
             df = Counter()
             for chunk in chunks:
@@ -316,6 +443,7 @@ class KnowledgeBase:
             self._chunks = chunks
             self._idf = idf
             self._signature = signature
+            self._save_cache()
 
             indexed = sum(1 for d in docs.values() if not d.error)
             logger.info(
@@ -339,29 +467,38 @@ class KnowledgeBase:
             return []
 
         threshold = self.min_score if min_score is None else min_score
-        q_tf = Counter(tokenize(query))
+        q_tf = Counter(tokenize(query, drop_stopwords=True))
+        if not q_tf:
+            return []
         q_weights = {
             token: (1.0 + math.log(count)) * self._idf.get(token, 1.0)
             for token, count in q_tf.items()
         }
         q_norm = math.sqrt(sum(w * w for w in q_weights.values()))
-        if q_norm == 0:
+        q_weight_sum = sum(q_weights.values())
+        if q_norm == 0 or q_weight_sum == 0:
             return []
 
-        scored: list[tuple[float, Chunk]] = []
+        scored: list[tuple[float, float, Chunk]] = []
         for chunk in self._chunks:
             if chunk.norm == 0:
                 continue
-            dot = sum(
-                weight * chunk.weights[token]
-                for token, weight in q_weights.items()
-                if token in chunk.weights
-            )
+            dot = 0.0
+            matched_weight = 0.0
+            for token, weight in q_weights.items():
+                chunk_weight = chunk.weights.get(token)
+                if chunk_weight:
+                    dot += weight * chunk_weight
+                    matched_weight += weight
             if dot <= 0:
+                continue
+            # 只命中「是什么」这类个别词、而问题核心词全部没中的片段直接丢弃
+            coverage = matched_weight / q_weight_sum
+            if coverage < _MIN_QUERY_COVERAGE:
                 continue
             score = dot / (q_norm * chunk.norm)
             if score >= threshold:
-                scored.append((score, chunk))
+                scored.append((score, coverage, chunk))
 
         scored.sort(key=lambda item: item[0], reverse=True)
         return [
@@ -371,8 +508,9 @@ class KnowledgeBase:
                 "index": chunk.index,
                 "text": chunk.text,
                 "score": round(score, 4),
+                "coverage": round(coverage, 3),
             }
-            for score, chunk in scored[: max(1, top_k)]
+            for score, coverage, chunk in scored[: max(1, top_k)]
         ]
 
     # ---------------------------------------------------------------- 管理
@@ -391,9 +529,13 @@ class KnowledgeBase:
                 f"文件过大（上限 {self.max_file_bytes // (1024 * 1024)}MB）"
             )
 
-        # 先校验能否解析，避免把坏文件写进知识库
+        # 先校验能否解析，避免把坏文件写进知识库；切片结果顺手放进缓存，
+        # 后面 refresh 就不用再解析一遍（PDF 尤其明显）
         text = extract_text(name, data)
         if not text.strip():
+            raise ValueError("文件里没有可用的文字")
+        pieces = split_text(text, self.chunk_size, self.overlap)
+        if not pieces:
             raise ValueError("文件里没有可用的文字")
 
         with self._lock:
@@ -401,6 +543,8 @@ class KnowledgeBase:
             path = os.path.join(self.root, name)
             with open(path, "wb") as fh:
                 fh.write(data)
+            stat = os.stat(path)
+            self._cache[name] = ((stat.st_mtime_ns, stat.st_size), pieces, None)
             self.refresh(force=True)
 
             doc_id = hashlib.sha1(name.encode("utf-8")).hexdigest()[:16]
@@ -421,10 +565,14 @@ class KnowledgeBase:
             doc = self._docs.get(doc_id)
             if doc is None:
                 return False
-            # 确保只删除知识库目录内的文件
+            # 确保只删除知识库目录内的文件（支持子目录）
             root = os.path.realpath(self.root)
             target = os.path.realpath(doc.path)
-            if os.path.dirname(target) != root:
+            try:
+                inside = os.path.commonpath([root, target]) == root
+            except ValueError:  # 不同盘符
+                inside = False
+            if not inside:
                 return False
             try:
                 os.remove(target)

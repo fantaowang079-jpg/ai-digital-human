@@ -7,7 +7,7 @@ import os
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -137,8 +137,10 @@ class KBSearchRequest(BaseModel):
 
 
 @app.get("/api/kb")
-def kb_overview():
+def kb_overview(response: Response):
     """知识库概览：是否启用、文档列表、片段总数。"""
+    # 上传后前端会立刻重新拉取，禁止浏览器/代理缓存，保证列表实时更新
+    response.headers["Cache-Control"] = "no-store"
     if knowledge_base is None:
         return {"enabled": False, "documents": [], "total_documents": 0, "total_chunks": 0}
     return {"enabled": True, **knowledge_base.stats()}
@@ -189,7 +191,8 @@ def kb_reload():
 
 
 @app.get("/api/health")
-def health():
+def health(response: Response):
+    response.headers["Cache-Control"] = "no-store"
     kb_stats = knowledge_base.stats() if knowledge_base is not None else None
     return {
         "status": "ok",

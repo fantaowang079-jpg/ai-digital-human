@@ -50,6 +50,84 @@ def test_split_text_respects_chunk_size():
     assert all(len(c) <= 100 for c in chunks)
 
 
+def test_split_text_keeps_all_headings_in_outline():
+    """回归：连续标题（题库/大纲）不能被后一个标题覆盖丢失。"""
+    text = (
+        "# 题库\n\n## 数据库\n\n### MySQL的索引\n\n### MySQL的事务\n\n"
+        "## Agent\n\n### 什么是Agent\n"
+    )
+    chunks = split_text(text)
+    joined = "\n".join(chunks)
+
+    assert "MySQL的索引" in joined
+    assert "MySQL的事务" in joined
+    assert "什么是Agent" in joined
+    assert len(chunks) >= 5
+
+
+def test_split_text_binds_heading_to_body():
+    text = "# 手册\n\n## 保修\n\n整机保修两年。\n\n## 清洁\n\n每月清洗一次。"
+    chunks = split_text(text)
+
+    assert any("保修" in c and "两年" in c for c in chunks)
+    assert any("清洁" in c and "每月" in c for c in chunks)
+
+
+def test_search_outline_questions(tmp_path):
+    text = "# 题库\n\n## 数据库\n\n### MySQL的索引\n\n### MySQL的事务\n"
+    (tmp_path / "题库.md").write_text(text, encoding="utf-8")
+    kb = KnowledgeBase(str(tmp_path), min_score=0.0)
+
+    hits = kb.search("MySQL的索引", top_k=1)
+    assert hits
+    assert "MySQL的索引" in hits[0]["text"]
+
+
+def test_recursive_scan_indexes_subdirectories(tmp_path):
+    sub = tmp_path / "主线剧情"
+    sub.mkdir()
+    (sub / "剧情.md").write_text("黑暗时代剧情：博士在石棺中醒来。", encoding="utf-8")
+
+    kb = KnowledgeBase(str(tmp_path), min_score=0.0)
+
+    docs = kb.stats()["documents"]
+    assert [d["name"] for d in docs] == ["主线剧情/剧情.md"]
+    hits = kb.search("黑暗时代剧情", top_k=1)
+    assert hits and hits[0]["source"] == "主线剧情/剧情.md"
+
+
+def test_parse_cache_avoids_reparsing(tmp_path, monkeypatch):
+    (tmp_path / "a.md").write_text("缓存测试内容。", encoding="utf-8")
+    KnowledgeBase(str(tmp_path), min_score=0.0)
+
+    import backend.knowledge as knowledge_mod
+
+    calls = []
+    real_extract = knowledge_mod.extract_text
+
+    def counting_extract(name, data):
+        calls.append(name)
+        return real_extract(name, data)
+
+    monkeypatch.setattr(knowledge_mod, "extract_text", counting_extract)
+    kb = KnowledgeBase(str(tmp_path), min_score=0.0)
+
+    assert calls == []  # 第二次启动直接复用磁盘缓存
+    assert kb.search("缓存测试内容", top_k=1)
+
+
+def test_changed_file_is_reparsed(tmp_path):
+    path = tmp_path / "a.md"
+    path.write_text("旧内容。", encoding="utf-8")
+    kb = KnowledgeBase(str(tmp_path), min_score=0.0)
+
+    path.write_text("全新的内容，介绍量子计算机的原理。", encoding="utf-8")
+    kb.refresh()
+
+    hits = kb.search("量子计算机", top_k=1)
+    assert hits and "量子计算机" in hits[0]["text"]
+
+
 def test_sanitize_filename_blocks_path_traversal():
     assert sanitize_filename("../../etc/passwd.txt") == "passwd.txt"
     assert sanitize_filename("..\\..\\机密 文档.md") == "机密 文档.md"
@@ -195,3 +273,9 @@ def test_kb_upload_rejects_empty_file(kb_client):
 def test_kb_delete_missing_document_returns_404(kb_client):
     client, _ = kb_client
     assert client.delete("/api/kb/not-exist").status_code == 404
+
+
+def test_kb_overview_is_not_cached(kb_client):
+    client, _ = kb_client
+    resp = client.get("/api/kb")
+    assert resp.headers["cache-control"] == "no-store"
