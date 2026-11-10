@@ -36,6 +36,13 @@ class MockLLMProvider(LLMProvider):
         last_user = next(
             (m["content"] for m in reversed(messages) if m["role"] == "user"), ""
         )
+        # 如果编排层注入了知识库上下文，就把它引用出来，便于离线演示检索效果
+        for msg in reversed(messages):
+            content = msg.get("content", "")
+            if msg.get("role") == "system" and "【知识库资料】" in content:
+                excerpt = content.split("【知识库资料】", 1)[1].strip()
+                excerpt = excerpt.replace("\n", " ")[:120]
+                return f"（Mock · 知识库命中）根据资料：{excerpt}……"
         return (
             f"（Mock 回复）我听到你说：「{last_user}」。"
             "配置 DeepSeek API Key 后，这里会变成真实的大模型回复。"

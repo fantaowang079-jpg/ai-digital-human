@@ -7,12 +7,13 @@ import os
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.config import load_config
+from backend.knowledge import KnowledgeBase
 from backend.pipeline import DigitalHumanPipeline
 from backend.providers.llm import get_llm_provider
 from backend.providers.stt import get_stt_provider
@@ -23,10 +24,22 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 config = load_config()
+
+# 知识库目录：KB_DIR 为空时用项目根目录下的 knowledge/
+kb_dir = config.kb_dir or os.path.join(BASE_DIR, "knowledge")
+if not os.path.isabs(kb_dir):
+    kb_dir = os.path.join(BASE_DIR, kb_dir)
+knowledge_base = (
+    KnowledgeBase(kb_dir, min_score=config.kb_min_score)
+    if config.kb_enabled
+    else None
+)
+
 pipeline = DigitalHumanPipeline(
     config=config,
     llm=get_llm_provider(config),
     tts=get_tts_provider(config),
+    knowledge_base=knowledge_base,
 )
 stt_provider = get_stt_provider(config)
 
@@ -117,13 +130,75 @@ def chat_stream(req: ChatRequest):
     )
 
 
+# ---------------------------------------------------------------- 知识库管理
+class KBSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    top_k: int = Field(default=4, ge=1, le=20)
+
+
+@app.get("/api/kb")
+def kb_overview():
+    """知识库概览：是否启用、文档列表、片段总数。"""
+    if knowledge_base is None:
+        return {"enabled": False, "documents": [], "total_documents": 0, "total_chunks": 0}
+    return {"enabled": True, **knowledge_base.stats()}
+
+
+@app.post("/api/kb/upload")
+async def kb_upload(file: UploadFile = File(...)):
+    """上传知识库文档（txt / md / csv / pdf / docx），落盘后立即重建索引。"""
+    if knowledge_base is None:
+        raise HTTPException(status_code=400, detail="知识库未启用（KB_ENABLED=false）")
+
+    data = await file.read()
+    try:
+        doc = knowledge_base.add_document(file.filename or "document.txt", data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        logger.exception("knowledge upload failed")
+        raise HTTPException(status_code=500, detail="知识库上传失败，请稍后重试")
+    return doc
+
+
+@app.delete("/api/kb/{doc_id}")
+def kb_delete(doc_id: str):
+    """按文档 ID 删除知识库文档。"""
+    if knowledge_base is None:
+        raise HTTPException(status_code=400, detail="知识库未启用（KB_ENABLED=false）")
+    if not knowledge_base.remove_document(doc_id):
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return {"ok": True}
+
+
+@app.post("/api/kb/search")
+def kb_search(req: KBSearchRequest):
+    """检索调试接口：直接查看某个问题会命中哪些片段。"""
+    if knowledge_base is None:
+        return {"enabled": False, "hits": []}
+    return {"enabled": True, "hits": knowledge_base.search(req.query, top_k=req.top_k)}
+
+
+@app.post("/api/kb/reload")
+def kb_reload():
+    """手动重建索引（外部直接往 knowledge/ 放文件后可调用）。"""
+    if knowledge_base is None:
+        return {"enabled": False}
+    knowledge_base.refresh(force=True)
+    return {"enabled": True, **knowledge_base.stats()}
+
+
 @app.get("/api/health")
 def health():
+    kb_stats = knowledge_base.stats() if knowledge_base is not None else None
     return {
         "status": "ok",
         "llm_provider": config.llm_provider,
         "tts_provider": config.tts_provider,
         "stt_provider": config.stt_provider,
+        "kb_enabled": config.kb_enabled,
+        "kb_documents": kb_stats["total_documents"] if kb_stats else 0,
+        "kb_chunks": kb_stats["total_chunks"] if kb_stats else 0,
     }
 
 

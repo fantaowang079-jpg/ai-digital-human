@@ -19,7 +19,7 @@
       color: var(--text);
       min-height: 100vh;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
       padding: 20px;
     }
@@ -56,6 +56,93 @@
     @keyframes pulse { 50% { opacity: .4; } }
 
     svg { width: 180px; height: 180px; }
+
+    /* 知识库面板 */
+    .kb-card {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 12px 14px;
+      box-shadow: 0 10px 40px rgba(0,0,0,.4);
+      font-size: 13px;
+    }
+    .kb-card summary {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      list-style: none;
+      user-select: none;
+    }
+    .kb-card summary::-webkit-details-marker { display: none; }
+    .kb-card summary::after {
+      content: "▾";
+      color: var(--muted);
+      transition: transform .15s;
+    }
+    .kb-card[open] summary::after { transform: rotate(180deg); }
+    .kb-badge {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .kb-body {
+      margin-top: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .kb-drop {
+      border: 1px dashed #3a3f63;
+      border-radius: 12px;
+      padding: 14px;
+      text-align: center;
+      color: var(--muted);
+      cursor: pointer;
+      transition: border-color .15s, background .15s;
+    }
+    .kb-drop:hover, .kb-drop.dragover {
+      border-color: var(--accent);
+      color: var(--text);
+      background: rgba(108,140,255,.08);
+    }
+    .kb-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+    .kb-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #232849;
+      border-radius: 10px;
+      padding: 7px 10px;
+    }
+    .kb-item .kb-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .kb-item .kb-meta {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .kb-item .kb-del {
+      background: transparent;
+      color: #f87171;
+      padding: 2px 4px;
+      font-size: 12px;
+    }
+    .kb-empty {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+      padding: 4px;
+    }
 
     .chat-box {
       background: var(--card);
@@ -140,6 +227,16 @@
       <div class="status" id="provider" style="margin-top:6px;"></div>
     </div>
 
+    <!-- 知识库：上传文档后，数字人会优先依据这些资料回答 -->
+    <details class="kb-card" id="kbCard">
+      <summary>📚 知识库<span class="kb-badge" id="kbBadge">加载中…</span></summary>
+      <div class="kb-body">
+        <div class="kb-drop" id="kbDrop">点击或拖拽文件到这里上传<br />支持 txt / md / csv / pdf / docx</div>
+        <input type="file" id="kbFile" accept=".txt,.md,.markdown,.csv,.pdf,.docx" multiple hidden />
+        <div class="kb-list" id="kbList"></div>
+      </div>
+    </details>
+
     <div class="chat-box" id="chatBox"></div>
 
     <div class="input-row">
@@ -159,6 +256,11 @@
     const mouth = document.getElementById("mouth");
     const eyeL = document.getElementById("eyeL");
     const eyeR = document.getElementById("eyeR");
+    const kbCard = document.getElementById("kbCard");
+    const kbBadge = document.getElementById("kbBadge");
+    const kbList = document.getElementById("kbList");
+    const kbDrop = document.getElementById("kbDrop");
+    const kbFile = document.getElementById("kbFile");
 
     let messages = [];
     let audioCtx = null;
@@ -213,6 +315,115 @@
       statusEl.className = "status " + mode;
       statusEl.innerHTML = '<span class="dot"></span>' + text;
     }
+
+    // ---------------- 知识库面板 ----------------
+    async function loadKb() {
+      try {
+        const r = await fetch("/api/kb");
+        const d = await r.json();
+        if (!d.enabled) {
+          kbBadge.textContent = "未启用";
+          kbDrop.style.display = "none";
+          kbList.innerHTML = '<div class="kb-empty">后端未启用知识库（KB_ENABLED=false）</div>';
+          return;
+        }
+        kbDrop.style.display = "";
+        kbBadge.textContent = `${d.total_documents} 篇 · ${d.total_chunks} 段`;
+        renderKbList(d.documents || []);
+      } catch (e) {
+        kbBadge.textContent = "加载失败";
+      }
+    }
+
+    function renderKbList(docs) {
+      kbList.innerHTML = "";
+      if (!docs.length) {
+        kbList.innerHTML = '<div class="kb-empty">还没有文档，上传后数字人就会基于它回答</div>';
+        return;
+      }
+      for (const doc of docs) {
+        const item = document.createElement("div");
+        item.className = "kb-item";
+
+        const name = document.createElement("span");
+        name.className = "kb-name";
+        name.textContent = doc.name;
+        name.title = doc.name;
+
+        const meta = document.createElement("span");
+        meta.className = "kb-meta";
+        if (doc.error) {
+          meta.textContent = "解析失败";
+          meta.title = doc.error;
+          meta.style.color = "#f87171";
+        } else {
+          meta.textContent = `${doc.chunks} 段`;
+        }
+
+        const del = document.createElement("button");
+        del.className = "kb-del";
+        del.textContent = "删除";
+        del.title = "从知识库移除";
+        del.onclick = () => deleteKbDoc(doc);
+
+        item.append(name, meta, del);
+        kbList.appendChild(item);
+      }
+    }
+
+    async function uploadKbFiles(files) {
+      if (!files || !files.length) return;
+      kbBadge.textContent = "上传中…";
+      let ok = 0;
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append("file", file);
+        try {
+          const r = await fetch("/api/kb/upload", { method: "POST", body: fd });
+          if (r.ok) {
+            ok++;
+          } else {
+            const err = await r.json().catch(() => ({}));
+            addBubble(`知识库上传失败（${file.name}）：${err.detail || r.status}`, "assistant");
+          }
+        } catch (e) {
+          addBubble(`知识库上传失败（${file.name}）：${e.message}`, "assistant");
+        }
+      }
+      if (ok) kbCard.open = true;
+      await loadKb();
+    }
+
+    async function deleteKbDoc(doc) {
+      if (!confirm(`确定从知识库删除「${doc.name}」吗？`)) return;
+      try {
+        const r = await fetch("/api/kb/" + encodeURIComponent(doc.id), { method: "DELETE" });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          addBubble("删除失败：" + (err.detail || r.status), "assistant");
+        }
+      } catch (e) {
+        addBubble("删除失败：" + e.message, "assistant");
+      }
+      await loadKb();
+    }
+
+    kbDrop.addEventListener("click", () => kbFile.click());
+    kbFile.addEventListener("change", () => {
+      uploadKbFiles(kbFile.files);
+      kbFile.value = "";   // 允许重复上传同一个文件
+    });
+    kbDrop.addEventListener("dragover", e => {
+      e.preventDefault();
+      kbDrop.classList.add("dragover");
+    });
+    kbDrop.addEventListener("dragleave", () => kbDrop.classList.remove("dragover"));
+    kbDrop.addEventListener("drop", e => {
+      e.preventDefault();
+      kbDrop.classList.remove("dragover");
+      uploadKbFiles(e.dataTransfer.files);
+    });
+    loadKb();
 
     // 播放一段 base64 音频，返回 Promise（音频播完 resolve）
     function playAudio(base64) {

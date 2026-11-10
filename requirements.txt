@@ -5,3 +5,6 @@ faster-whisper
 requests
 python-dotenv
 pydantic
+# 知识库：文件上传解析（FastAPI UploadFile）+ PDF 文本提取
+python-multipart
+pypdf
