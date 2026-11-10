@@ -206,6 +206,34 @@
     }
     button.ghost { background: #3a3f63; }
 
+    /* 上下文记忆 */
+    .memory-summary {
+      background: #232849;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.55;
+      color: #c9cdea;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .memory-list { max-height: 220px; }
+    .memory-item {
+      background: #232849;
+      border-radius: 8px;
+      padding: 6px 9px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--text);
+      word-break: break-word;
+    }
+    .memory-item .memory-role {
+      color: var(--accent);
+      font-weight: 600;
+      margin-right: 4px;
+    }
+    .memory-item.user .memory-role { color: #9db7ff; }
+
     .chat-box {
       background: var(--card);
       border-radius: 20px;
@@ -317,6 +345,20 @@
       <div class="status" id="provider" style="margin-top:6px;"></div>
     </div>
 
+    <!-- 上下文记忆：本地持久化，刷新/重启后仍能回顾以前的对话 -->
+    <details class="kb-card" id="memoryCard">
+      <summary>🧠 上下文记忆<span class="kb-badge" id="memoryBadge">加载中…</span></summary>
+      <div class="kb-body">
+        <div class="pdf-info" id="memoryInfo"></div>
+        <div class="memory-summary" id="memorySummary" hidden></div>
+        <div class="kb-list memory-list" id="memoryList"></div>
+        <div class="pdf-actions">
+          <button id="memoryRefresh">刷新记忆</button>
+          <button id="memoryClear" class="ghost">清除记忆</button>
+        </div>
+      </div>
+    </details>
+
     <!-- 知识库：上传文档后，数字人会优先依据这些资料回答 -->
     <details class="kb-card" id="kbCard">
       <summary>📚 知识库<span class="kb-badge" id="kbBadge">加载中…</span></summary>
@@ -376,6 +418,26 @@
     const pdfActions = document.getElementById("pdfActions");
     const modeSwitch = document.getElementById("modeSwitch");
     const personaName = document.getElementById("personaName");
+    const memoryBadge = document.getElementById("memoryBadge");
+    const memoryInfo = document.getElementById("memoryInfo");
+    const memorySummary = document.getElementById("memorySummary");
+    const memoryList = document.getElementById("memoryList");
+
+    // 浏览器本地会话 ID：同一个浏览器刷新/重启后仍然使用同一份长期记忆
+    function getSessionId() {
+      const key = "dh_session_id";
+      let id = null;
+      try { id = localStorage.getItem(key); } catch (e) { /* 隐私模式 */ }
+      if (!id || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+        const rand = (window.crypto && crypto.randomUUID)
+          ? crypto.randomUUID().replace(/-/g, "").slice(0, 16)
+          : Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+        id = "s_" + rand;
+        try { localStorage.setItem(key, id); } catch (e) { /* 忽略 */ }
+      }
+      return id;
+    }
+    const SESSION_ID = getSessionId();
 
     let messages = [];
     let mode = "professional";
@@ -455,6 +517,103 @@
       }
       bubble.insertAdjacentElement("afterend", box);
       chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    // ---------------- 上下文记忆 ----------------
+    function memoryRole(role) {
+      if (role === "user") return "你";
+      return mode === "psychologist" ? "心语" : "知语";
+    }
+
+    function renderMemory(data) {
+      const total = data.total_messages || 0;
+      memoryBadge.textContent = total ? `已记住 ${total} 条` : "暂无记忆";
+      memoryInfo.textContent = total
+        ? `当前${mode === "psychologist" ? "心理医生" : "专业"}模式 · 共 ${total} 条对话记录`
+        : "还没有历史对话，聊过之后这里会出现记忆。";
+
+      const summary = (data.summary || "").trim();
+      memorySummary.hidden = !summary;
+      memorySummary.textContent = summary ? `记忆摘要：${summary}` : "";
+
+      memoryList.innerHTML = "";
+      const recent = (data.messages || []).slice(-20);
+      if (!recent.length) {
+        memoryList.innerHTML = '<div class="kb-empty">暂无历史对话</div>';
+        return;
+      }
+      for (const item of recent) {
+        const row = document.createElement("div");
+        row.className = "memory-item " + (item.role === "user" ? "user" : "assistant");
+        const role = document.createElement("span");
+        role.className = "memory-role";
+        role.textContent = memoryRole(item.role);
+        const text = document.createElement("span");
+        text.textContent = item.content;
+        row.append(role, text);
+        memoryList.appendChild(row);
+      }
+      memoryList.scrollTop = memoryList.scrollHeight;
+    }
+
+    async function loadMemory({ restore = false } = {}) {
+      try {
+        const r = await fetch(
+          `/api/memory?session_id=${encodeURIComponent(SESSION_ID)}&mode=${mode}&limit=50`,
+          { cache: "no-store" }
+        );
+        const data = await r.json();
+        if (!data.enabled) {
+          memoryBadge.textContent = "未启用";
+          memoryInfo.textContent = "后端未启用上下文记忆（MEMORY_ENABLED=false）";
+          memorySummary.hidden = true;
+          memoryList.innerHTML = "";
+          return data;
+        }
+        renderMemory(data);
+        if (restore) restoreChatFromMemory(data.messages || []);
+        return data;
+      } catch (e) {
+        memoryBadge.textContent = "加载失败";
+        memoryInfo.textContent = "记忆加载失败：" + (e.message || "请稍后重试");
+        if (restore && !messages.length && !chatBox.childElementCount) {
+          addBubble(MODE_META[mode].greeting, "assistant");
+        }
+        return null;
+      }
+    }
+
+    function restoreChatFromMemory(msgs) {
+      // 有正在进行的对话时不覆盖，避免冲掉用户刚发的消息
+      if (isStreaming || messages.length || chatBox.childElementCount) return;
+      const recent = (msgs || []).slice(-20);
+      for (const item of recent) {
+        addBubble(item.content, item.role === "user" ? "user" : "assistant");
+        messages.push({ role: item.role, content: item.content });
+      }
+      if (!recent.length) addBubble(MODE_META[mode].greeting, "assistant");
+    }
+
+    async function clearMemory() {
+      if (!confirm("确定清除当前模式的长期记忆吗？当前屏幕上的对话也会一起清空。")) return;
+      try {
+        await fetch(
+          `/api/memory?session_id=${encodeURIComponent(SESSION_ID)}&mode=${mode}`,
+          { method: "DELETE" }
+        );
+      } catch (e) {
+        addBubble("清除记忆失败：" + (e.message || "请稍后重试"), "assistant");
+        return;
+      }
+      audioQueue.length = 0;
+      if (currentSource) {
+        try { currentSource.stop(); } catch (e) { /* 已经结束 */ }
+        currentSource = null;
+      }
+      if (conversationMode) exitConversation();
+      messages = [];
+      chatBox.innerHTML = "";
+      await loadMemory({ restore: true });
     }
 
     function setStatus(mode, text) {
@@ -695,7 +854,7 @@
       },
     };
 
-    function setMode(next, greet = true) {
+    function setMode(next) {
       if (!MODE_META[next]) return;
       mode = next;
 
@@ -719,7 +878,8 @@
 
       messages = [];
       chatBox.innerHTML = "";
-      if (greet) addBubble(MODE_META[next].greeting, "assistant");
+      // 恢复该模式自己的历史对话；没有历史时自动显示欢迎语
+      loadMemory({ restore: true });
     }
 
     modeSwitch.addEventListener("click", e => {
@@ -731,10 +891,13 @@
         setStatus("thinking", "正在回复，请稍后再切换模式");
         return;
       }
-      setMode(next, true);
+      setMode(next);
     });
 
-    setMode("professional", false);
+    document.getElementById("memoryRefresh").addEventListener("click", () => loadMemory());
+    document.getElementById("memoryClear").addEventListener("click", clearMemory);
+
+    setMode("professional");
 
     // 播放一段 base64 音频，返回 Promise（音频播完 resolve）
     function playAudio(base64) {
@@ -838,13 +1001,14 @@
 
       const bubble = addBubble("", "assistant");
       let fullText = "";
+      let gotDelta = false;
       let failed = false;
 
       try {
         const resp = await fetch("/api/chat/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages, mode }),
+          body: JSON.stringify({ messages, mode, session_id: SESSION_ID }),
         });
         if (!resp.ok) throw new Error(await resp.text());
         if (!resp.body) throw new Error("流式响应为空");
@@ -868,11 +1032,24 @@
               renderSources(bubble, chunk.sources || []);
               continue;
             }
-            if (chunk.type && chunk.type !== "sentence") continue;
-            fullText += chunk.text || "";
-            bubble.textContent = fullText;
-            chatBox.scrollTop = chatBox.scrollHeight;
-            enqueueAudio(chunk.audio_base64);
+            if (chunk.type === "delta") {
+              // 逐词上屏：LLM 一有新增内容就追加到气泡
+              gotDelta = true;
+              fullText += chunk.text || "";
+              bubble.textContent = fullText;
+              chatBox.scrollTop = chatBox.scrollHeight;
+              continue;
+            }
+            if (chunk.type === "sentence") {
+              // 兼容不逐词输出的 provider：没有 delta 时用整句补文本
+              if (!gotDelta) {
+                fullText += chunk.text || "";
+                bubble.textContent = fullText;
+                chatBox.scrollTop = chatBox.scrollHeight;
+              }
+              enqueueAudio(chunk.audio_base64);
+              continue;
+            }
           }
         }
         if (!fullText.trim()) throw new Error("没有收到回复");
@@ -894,7 +1071,10 @@
         if (!conversationMode) micBtn.disabled = false;
         document.querySelectorAll(".mode-btn").forEach(b => b.disabled = false);
         isStreaming = false;
-        if (!failed) maybeRestartListening();
+        if (!failed) {
+          loadMemory();          // 刷新记忆面板计数/摘要
+          maybeRestartListening();
+        }
       }
     }
 

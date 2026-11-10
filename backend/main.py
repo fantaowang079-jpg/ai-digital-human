@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from backend.config import load_config
 from backend.knowledge import KnowledgeBase, extract_pdf_text
+from backend.memory import MemoryStore, extractive_summary
 from backend.pipeline import DigitalHumanPipeline
 from backend.providers.llm import get_llm_provider
 from backend.providers.stt import get_stt_provider
@@ -36,13 +37,69 @@ knowledge_base = (
     else None
 )
 
+# 上下文记忆：默认保存在项目根目录 data/memory.db
+memory_db_path = config.memory_db_path or os.path.join(BASE_DIR, "data", "memory.db")
+if not os.path.isabs(memory_db_path):
+    memory_db_path = os.path.join(BASE_DIR, memory_db_path)
+memory_store = (
+    MemoryStore(
+        memory_db_path,
+        keep_verbatim=config.memory_keep_verbatim,
+        summarize_after=config.memory_summarize_after,
+    )
+    if config.memory_enabled
+    else None
+)
+
 pipeline = DigitalHumanPipeline(
     config=config,
     llm=get_llm_provider(config),
     tts=get_tts_provider(config),
     knowledge_base=knowledge_base,
+    memory=memory_store,
 )
 stt_provider = get_stt_provider(config)
+
+
+def _summarize_memory(existing: str, transcript: str) -> str:
+    """把历史摘要和新对话压缩成一段长期记忆（Mock 模式用抽取式兜底）。"""
+    if config.llm_provider == "mock":
+        return extractive_summary(transcript)
+
+    content = (
+        "请把下面的对话压缩成一段不超过 300 字的长期记忆摘要。"
+        "保留用户身份、偏好、目标、关键事实、待办和情绪状态，不要编造。\n\n"
+        f"已有摘要：{existing or '无'}\n\n新对话：\n{transcript}"
+    )
+    try:
+        return pipeline.llm.chat(
+            [
+                {"role": "system", "content": "你是对话记忆压缩器，只输出摘要正文。"},
+                {"role": "user", "content": content},
+            ]
+        ).strip()
+    except Exception:
+        logger.exception("记忆摘要调用大模型失败，改用抽取式摘要")
+        return extractive_summary(transcript)
+
+
+def _remember_exchange(
+    session_id: str, mode: str, history: list[dict], assistant_text: str
+) -> None:
+    """把一轮成功对话写入长期记忆，并在后台按需生成摘要。"""
+    if memory_store is None:
+        return
+    user_text = next(
+        (m.get("content", "") for m in reversed(history) if m.get("role") == "user"),
+        "",
+    )
+    if not user_text or not assistant_text.strip():
+        return
+    try:
+        memory_store.append_exchange(session_id, mode, user_text, assistant_text)
+        memory_store.maybe_summarize(session_id, mode, _summarize_memory)
+    except Exception:
+        logger.exception("写入长期记忆失败")
 
 logger = logging.getLogger("digital_human")
 
@@ -62,6 +119,13 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=40)
     # professional=专业模式「知语」；psychologist=心理医生模式「心语」
     mode: Literal["professional", "psychologist"] = "professional"
+    # 浏览器本地持久化的会话 ID，用于跨刷新/重启找回上下文记忆
+    session_id: str = Field(
+        default="default",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
 
     def as_history(self) -> list[dict]:
         return [m.model_dump() for m in self.messages]
@@ -72,12 +136,13 @@ def chat(req: ChatRequest):
     """核心接口：接收对话历史，返回数字人的文字回复与合成语音。"""
     history = req.as_history()
     try:
-        reply_text, reply_audio = pipeline.reply(history, req.mode)
+        reply_text, reply_audio = pipeline.reply(history, req.mode, req.session_id)
         sources = pipeline.retrieve_sources(history, req.mode)
     except Exception:
         logger.exception("chat failed")
         raise HTTPException(status_code=502, detail="生成失败，请稍后重试")
 
+    _remember_exchange(req.session_id, req.mode, history, reply_text)
     return {
         "reply_text": reply_text,
         "audio_base64": base64.b64encode(reply_audio).decode("ascii"),
@@ -117,6 +182,8 @@ def chat_stream(req: ChatRequest):
     history = req.as_history()
 
     def generate():
+        parts: list[str] = []
+        got_delta = False
         try:
             # 专业模式先推送参考来源，前端在气泡下方展示引用文件
             sources = pipeline.retrieve_sources(history, req.mode)
@@ -124,13 +191,33 @@ def chat_stream(req: ChatRequest):
                 yield json.dumps(
                     {"type": "sources", "sources": sources}, ensure_ascii=False
                 ) + "\n"
-            for sentence, audio in pipeline.stream_reply(history, req.mode):
-                chunk = {
-                    "type": "sentence",
-                    "text": sentence,
-                    "audio_base64": base64.b64encode(audio).decode("ascii"),
-                }
-                yield json.dumps(chunk, ensure_ascii=False) + "\n"
+
+            for event in pipeline.stream_events(history, req.mode, req.session_id):
+                if event["type"] == "delta":
+                    got_delta = True
+                    parts.append(event["text"])
+                    yield json.dumps(
+                        {"type": "delta", "text": event["text"]},
+                        ensure_ascii=False,
+                    ) + "\n"
+                else:
+                    # 不逐词输出的 provider：用句子文本补全完整回复
+                    if not got_delta:
+                        parts.append(event["text"])
+                    yield json.dumps(
+                        {
+                            "type": "sentence",
+                            "text": event["text"],
+                            "audio_base64": base64.b64encode(event["audio"]).decode(
+                                "ascii"
+                            ),
+                        },
+                        ensure_ascii=False,
+                    ) + "\n"
+
+            _remember_exchange(
+                req.session_id, req.mode, history, "".join(parts).strip()
+            )
         except Exception:
             logger.exception("chat stream failed")
             yield json.dumps(
@@ -235,6 +322,53 @@ def pdf_extract(file: UploadFile = File(...)):
     return {"filename": filename, "text": text, "chars": len(text), "pages": pages}
 
 
+# ---------------------------------------------------------------- 上下文记忆
+_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _check_session_id(session_id: str) -> None:
+    if not _SESSION_RE.fullmatch(session_id):
+        raise HTTPException(status_code=400, detail="session_id 格式不正确")
+
+
+@app.get("/api/memory")
+def memory_overview(
+    session_id: str = "default",
+    mode: Literal["professional", "psychologist"] = "professional",
+    limit: int = 50,
+):
+    """查看某个会话的长期记忆：摘要 + 最近对话。"""
+    _check_session_id(session_id)
+    if memory_store is None:
+        return {
+            "enabled": False,
+            "session_id": session_id,
+            "mode": mode,
+            "summary": "",
+            "messages": [],
+            "total_messages": 0,
+        }
+    return {
+        "enabled": True,
+        "session_id": session_id,
+        "mode": mode,
+        **memory_store.overview(session_id, mode, max(1, min(limit, 200))),
+    }
+
+
+@app.delete("/api/memory")
+def memory_clear(
+    session_id: str = "default",
+    mode: Literal["professional", "psychologist"] | None = None,
+):
+    """清除某个会话的记忆；不传 mode 时清空两种模式。"""
+    _check_session_id(session_id)
+    if memory_store is None:
+        return {"ok": False, "detail": "记忆未启用"}
+    memory_store.clear(session_id, mode)
+    return {"ok": True, "session_id": session_id, "mode": mode}
+
+
 @app.get("/api/health")
 def health(response: Response):
     response.headers["Cache-Control"] = "no-store"
@@ -248,6 +382,7 @@ def health(response: Response):
         "kb_documents": kb_stats["total_documents"] if kb_stats else 0,
         "kb_chunks": kb_stats["total_chunks"] if kb_stats else 0,
         "modes": ["professional", "psychologist"],
+        "memory_enabled": config.memory_enabled,
     }
 
 

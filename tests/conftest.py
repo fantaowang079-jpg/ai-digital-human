@@ -3,8 +3,13 @@
 
 import os
 import sys
+import tempfile
 
 os.environ["LLM_PROVIDER"] = "mock"
+# 测试不要污染本机真实的 data/memory.db
+os.environ["MEMORY_DB_PATH"] = os.path.join(
+    tempfile.mkdtemp(prefix="dh_memory_test_"), "memory.db"
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:

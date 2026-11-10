@@ -14,13 +14,17 @@ class FakePipeline:
     def __init__(self, sources=None):
         self.sources = sources or []
         self.modes = []
+        self.session_ids = []
 
-    def stream_reply(self, history, mode="professional"):
+    def stream_events(self, history, mode="professional", session_id=None):
         self.modes.append(mode)
-        yield "你好。", b"audio-1"
-        yield "今天天气不错。", b"audio-2"
+        self.session_ids.append(session_id)
+        yield {"type": "delta", "text": "你好。"}
+        yield {"type": "sentence", "text": "你好。", "audio": b"audio-1"}
+        yield {"type": "delta", "text": "今天天气不错。"}
+        yield {"type": "sentence", "text": "今天天气不错。", "audio": b"audio-2"}
 
-    def reply(self, history, mode="professional"):
+    def reply(self, history, mode="professional", session_id=None):
         self.modes.append(mode)
         return "你好。", b"audio"
 
@@ -29,11 +33,12 @@ class FakePipeline:
 
 
 class FailingPipeline:
-    def stream_reply(self, history, mode="professional"):
-        yield "第一句。", b"audio-1"
+    def stream_events(self, history, mode="professional", session_id=None):
+        yield {"type": "delta", "text": "第一句。"}
+        yield {"type": "sentence", "text": "第一句。", "audio": b"audio-1"}
         raise RuntimeError("upstream 401")
 
-    def reply(self, history, mode="professional"):
+    def reply(self, history, mode="professional", session_id=None):
         raise RuntimeError("upstream 401")
 
     def retrieve_sources(self, history, mode="professional"):
@@ -59,9 +64,16 @@ def test_stream_returns_sentence_events(client, monkeypatch):
 
     assert resp.status_code == 200
     events = _events(resp)
-    assert [e["type"] for e in events] == ["sentence", "sentence"]
+    assert [e["type"] for e in events] == [
+        "delta",
+        "sentence",
+        "delta",
+        "sentence",
+    ]
     assert events[0]["text"] == "你好。"
-    assert base64.b64decode(events[0]["audio_base64"]) == b"audio-1"
+    sentence = next(e for e in events if e["type"] == "sentence")
+    assert sentence["text"] == "你好。"
+    assert base64.b64decode(sentence["audio_base64"]) == b"audio-1"
 
 
 def test_stream_error_is_explicit_event(client, monkeypatch):
@@ -75,7 +87,8 @@ def test_stream_error_is_explicit_event(client, monkeypatch):
     # 响应头已发出，状态码无法改；但必须有一条 error 事件让前端区分「正常结束」
     assert resp.status_code == 200
     events = _events(resp)
-    assert events[0]["type"] == "sentence"
+    assert events[0]["type"] == "delta"
+    assert events[1]["type"] == "sentence"
     assert events[-1]["type"] == "error"
     assert "失败" in events[-1]["message"]
 
@@ -141,7 +154,12 @@ def test_stream_emits_sources_in_professional_mode(client, monkeypatch):
 
     events = _events(resp)
     assert events[0] == {"type": "sources", "sources": sources}
-    assert [e["type"] for e in events[1:]] == ["sentence", "sentence"]
+    assert [e["type"] for e in events[1:]] == [
+        "delta",
+        "sentence",
+        "delta",
+        "sentence",
+    ]
 
 
 def test_stream_psychologist_mode_has_no_sources(client, monkeypatch):
@@ -158,7 +176,7 @@ def test_stream_psychologist_mode_has_no_sources(client, monkeypatch):
     )
 
     events = _events(resp)
-    assert all(e["type"] == "sentence" for e in events)
+    assert all(e["type"] in {"delta", "sentence"} for e in events)
 
 
 def test_mode_is_forwarded_to_pipeline(client, monkeypatch):

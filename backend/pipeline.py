@@ -3,6 +3,7 @@ import logging
 
 from backend.config import Config
 from backend.knowledge import KnowledgeBase
+from backend.memory import MemoryStore
 from backend.providers.llm import LLMProvider
 from backend.providers.tts import TTSProvider
 
@@ -22,25 +23,101 @@ class DigitalHumanPipeline:
         llm: LLMProvider,
         tts: TTSProvider,
         knowledge_base: KnowledgeBase | None = None,
+        memory: MemoryStore | None = None,
     ):
         self.config = config
         self.llm = llm
         self.tts = tts
         self.knowledge_base = knowledge_base
+        self.memory = memory
 
     def build_messages(
-        self, history: list[dict], mode: str = MODE_PROFESSIONAL
+        self,
+        history: list[dict],
+        mode: str = MODE_PROFESSIONAL,
+        session_id: str | None = None,
     ) -> list[dict]:
-        """组装消息：模式人格 + （仅专业模式）知识库上下文 + 对话历史。"""
+        """组装消息：模式人格 + 长期记忆 +（仅专业模式）知识库上下文 + 对话历史。"""
         if mode not in SUPPORTED_MODES:
             raise ValueError(f"未知模式: {mode}")
 
         system_prompt = self._system_prompt(mode)
+        memory_block = self._memory_context(session_id, mode, history)
+        if memory_block:
+            system_prompt = f"{system_prompt}\n\n{memory_block}"
         if mode == MODE_PROFESSIONAL:
             context = self._build_kb_context(history)
             if context:
                 system_prompt = f"{system_prompt}\n\n{context}"
         return [{"role": "system", "content": system_prompt}, *history]
+
+    def _memory_context(
+        self, session_id: str | None, mode: str, history: list[dict]
+    ) -> str:
+        """读取滚动摘要与相关旧对话，拼成长期记忆上下文。"""
+        if self.memory is None or not session_id:
+            return ""
+
+        user_texts = [
+            m.get("content", "")
+            for m in reversed(history)
+            if m.get("role") == "user" and m.get("content")
+        ]
+        query = user_texts[0] if user_texts else ""
+        exclude = {
+            (m.get("role"), m.get("content"))
+            for m in history
+            if m.get("role") and m.get("content")
+        }
+
+        try:
+            summary = self.memory.get_summary(session_id, mode)
+            recalls = self.memory.recall(
+                session_id, mode, query, exclude=exclude, limit=3
+            )
+            # 刷新页面后前端历史为空，补上最近几条旧对话，保证能接上话
+            recent = [
+                item
+                for item in self.memory.recent_messages(
+                    session_id, mode, limit=8
+                )
+                if (item["role"], item["content"]) not in exclude
+            ][-4:]
+        except Exception:
+            logger.exception("读取长期记忆失败，本轮不使用记忆")
+            return ""
+
+        recent_pairs = {(item["role"], item["content"]) for item in recent}
+        recalls = [
+            item for item in recalls if (item["role"], item["content"]) not in recent_pairs
+        ]
+
+        if not summary and not recalls and not recent:
+            return ""
+
+        lines = [
+            "【长期记忆】",
+            "以下是这位用户之前聊过的内容，用于保持对话连续性；"
+            "只在和当前问题相关时参考，不要机械复述。",
+        ]
+        if summary:
+            lines.append(f"记忆摘要：{summary}")
+        if recent:
+            lines.append("最近对话回忆：")
+            for item in recent:
+                role = "用户" if item["role"] == "user" else "助手"
+                lines.append(f"- [{role}] {item['content'][:300]}")
+        if recalls:
+            lines.append("相关回忆：")
+            for item in recalls:
+                role = "用户" if item["role"] == "user" else "助手"
+                lines.append(f"- [{role}] {item['content']}")
+        if mode == MODE_PROFESSIONAL:
+            lines.append(
+                "注意：长期记忆仅用于理解用户背景和保持连续性；"
+                "涉及专业事实的答案仍必须以【知识库资料】为依据。"
+            )
+        return "\n".join(lines)
 
     def _system_prompt(self, mode: str) -> str:
         if mode == MODE_PSYCHOLOGIST:
@@ -159,35 +236,58 @@ class DigitalHumanPipeline:
         return query
 
     def reply(
-        self, history: list[dict], mode: str = MODE_PROFESSIONAL
+        self,
+        history: list[dict],
+        mode: str = MODE_PROFESSIONAL,
+        session_id: str | None = None,
     ) -> tuple[str, bytes]:
         """输入对话历史，返回 (回复文本, 回复音频字节)。"""
-        reply_text = self.llm.chat(self.build_messages(history, mode))
+        reply_text = self.llm.chat(self.build_messages(history, mode, session_id))
         reply_audio = self.tts.synthesize(reply_text)
         return reply_text, reply_audio
 
-    def stream_reply(self, history: list[dict], mode: str = MODE_PROFESSIONAL):
-        """流式回复：LLM 边生成、边分句、边 TTS，逐个 yield (句子文本, 音频字节)。
+    def stream_events(
+        self,
+        history: list[dict],
+        mode: str = MODE_PROFESSIONAL,
+        session_id: str | None = None,
+    ):
+        """流式事件：先逐块 yield 文本 delta，再按句 yield 音频。
 
-        相比 reply() 一次生成全部，本方法让前端在首句生成后即可开始播放，
-        显著降低首字延迟。
+        event 形如：
+          {"type": "delta", "text": "..."}                    # 前端逐词上屏
+          {"type": "sentence", "text": "...", "audio": b"..."} # 前端排队播放
         """
-        messages = self.build_messages(history, mode)
+        messages = self.build_messages(history, mode, session_id)
         buffer = ""
         for delta in self.llm.stream_chat(messages):
+            if not delta:
+                continue
             buffer += delta
+            yield {"type": "delta", "text": delta}
             while True:
                 sentence, rest = self._pop_sentence(buffer)
                 if sentence is None:
                     break
                 buffer = rest
                 audio = self.tts.synthesize(sentence)
-                yield sentence, audio
+                yield {"type": "sentence", "text": sentence, "audio": audio}
         # 收尾：输出剩余未成句的文本
         tail = buffer.strip()
         if tail:
             audio = self.tts.synthesize(tail)
-            yield tail, audio
+            yield {"type": "sentence", "text": tail, "audio": audio}
+
+    def stream_reply(
+        self,
+        history: list[dict],
+        mode: str = MODE_PROFESSIONAL,
+        session_id: str | None = None,
+    ):
+        """兼容旧接口：只 yield (句子文本, 音频字节)，不输出逐词 delta。"""
+        for event in self.stream_events(history, mode, session_id):
+            if event["type"] == "sentence":
+                yield event["text"], event["audio"]
 
     @staticmethod
     def _pop_sentence(text: str) -> tuple[str | None, str]:

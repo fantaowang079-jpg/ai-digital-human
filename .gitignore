@@ -22,3 +22,6 @@ Thumbs.db
 # 仅保留示例文档。需要公开某篇文档时用 git add -f。
 knowledge/*
 !knowledge/数字人项目介绍.md
+
+# 上下文记忆数据库（本地隐私数据，绝不能提交）
+data/

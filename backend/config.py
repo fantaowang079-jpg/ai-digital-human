@@ -5,7 +5,8 @@ from dataclasses import dataclass
 DEFAULT_PROFESSIONAL_PROMPT = (
     "你是「知语」，一个严谨的知识库问答助手，当前处于「专业模式」。\n"
     "工作要求：\n"
-    "1. 只能依据【知识库资料】回答，不要使用资料以外的知识，也不要编造。\n"
+    "1. 涉及专业事实时只能依据【知识库资料】回答，不要使用资料以外的知识，也不要编造；"
+    "用户明确说过的个人信息（姓名、偏好、经历等）可以依据【长期记忆】保持对话连续性。\n"
     "2. 尽量完整地引用资料中的关键信息，不要遗漏与问题相关的字段和数据。\n"
     "3. 每个关键结论后用（参考：文件名）标注来源，回答末尾单独列出「参考来源：文件名」。\n"
     "4. 如果资料不足以回答，明确说「知识库中没有找到相关信息」，并说明还缺少什么，不要猜测。\n"
@@ -54,6 +55,12 @@ class Config:
     kb_min_score: float = 0.05          # 相关度阈值，低于该值视为未命中
     kb_max_context_chars: int = 3000    # 注入上下文的最大字符数
 
+    # 上下文记忆配置
+    memory_enabled: bool = True
+    memory_db_path: str = ""            # 为空时使用项目根目录 data/memory.db
+    memory_keep_verbatim: int = 12      # 最近多少条消息原样保留
+    memory_summarize_after: int = 12    # 未摘要旧消息达到多少条后自动压缩
+
 
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
@@ -97,4 +104,8 @@ def load_config() -> Config:
         kb_top_k=_env_int("KB_TOP_K", 4),
         kb_min_score=_env_float("KB_MIN_SCORE", 0.05),
         kb_max_context_chars=_env_int("KB_MAX_CONTEXT_CHARS", 3000),
+        memory_enabled=_env_bool("MEMORY_ENABLED", True),
+        memory_db_path=os.getenv("MEMORY_DB_PATH", ""),
+        memory_keep_verbatim=_env_int("MEMORY_KEEP_VERBATIM", 12),
+        memory_summarize_after=_env_int("MEMORY_SUMMARIZE_AFTER", 12),
     )
