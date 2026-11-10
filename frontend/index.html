@@ -30,6 +30,36 @@
       flex-direction: column;
       gap: 16px;
     }
+    .mode-switch {
+      display: flex;
+      gap: 6px;
+      background: var(--card);
+      border-radius: 16px;
+      padding: 6px;
+      box-shadow: 0 10px 40px rgba(0,0,0,.4);
+    }
+    .mode-btn {
+      flex: 1;
+      padding: 10px 8px;
+      border-radius: 11px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .mode-btn.active {
+      background: var(--accent);
+      color: #fff;
+    }
+    .mode-btn:not(.active):hover {
+      background: #2a2f55;
+      opacity: 1;
+    }
+    .persona-name {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: .02em;
+      margin-bottom: 6px;
+    }
     .avatar-card {
       background: var(--card);
       border-radius: 20px;
@@ -144,6 +174,38 @@
       padding: 4px;
     }
 
+    /* PDF 转文字 */
+    .pdf-info {
+      color: var(--muted);
+      font-size: 12px;
+      min-height: 16px;
+      line-height: 1.5;
+    }
+    .pdf-output {
+      margin: 0;
+      max-height: 240px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #232849;
+      border-radius: 10px;
+      padding: 10px;
+      font-family: inherit;
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--text);
+    }
+    .pdf-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .pdf-actions button {
+      flex: 1;
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+    button.ghost { background: #3a3f63; }
+
     .chat-box {
       background: var(--card);
       border-radius: 20px;
@@ -174,6 +236,28 @@
       align-self: flex-start;
       background: #2a2f55;
       border-bottom-left-radius: 4px;
+    }
+    .sources {
+      align-self: flex-start;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      max-width: 92%;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .sources-label { white-space: nowrap; }
+    .source-chip {
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding: 2px 7px;
+      border-radius: 8px;
+      background: #232849;
+      border: 1px solid #2f3560;
+      color: #b9c0e8;
     }
     .input-row {
       display: flex;
@@ -208,7 +292,13 @@
 </head>
 <body>
   <div class="app">
+    <div class="mode-switch" id="modeSwitch">
+      <button class="mode-btn active" data-mode="professional">🧠 专业模式 · 知语</button>
+      <button class="mode-btn" data-mode="psychologist">💬 心理医生 · 心语</button>
+    </div>
+
     <div class="avatar-card">
+      <div class="persona-name" id="personaName">知语 · 知识库助手</div>
       <div class="status" id="status"><span class="dot"></span>待机中</div>
       <!-- 数字人 SVG 形象：眼睛会眨眼，嘴巴随语音音量开合 -->
       <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
@@ -237,6 +327,22 @@
       </div>
     </details>
 
+    <!-- PDF 转文字：上传 PDF 提取文本，可复制 / 下载 txt -->
+    <details class="kb-card" id="pdfCard">
+      <summary>📄 PDF 转文字<span class="kb-badge" id="pdfBadge">上传 PDF 查看文本</span></summary>
+      <div class="kb-body">
+        <div class="kb-drop" id="pdfDrop">点击或拖拽 PDF 到这里<br />提取文字后可复制或下载 txt</div>
+        <input type="file" id="pdfFile" accept=".pdf,application/pdf" hidden />
+        <div class="pdf-info" id="pdfInfo"></div>
+        <pre class="pdf-output" id="pdfOutput" hidden></pre>
+        <div class="pdf-actions" id="pdfActions" hidden>
+          <button id="pdfCopy">复制文字</button>
+          <button id="pdfDownload">下载 txt</button>
+          <button id="pdfClear" class="ghost">清空</button>
+        </div>
+      </div>
+    </details>
+
     <div class="chat-box" id="chatBox"></div>
 
     <div class="input-row">
@@ -261,11 +367,22 @@
     const kbList = document.getElementById("kbList");
     const kbDrop = document.getElementById("kbDrop");
     const kbFile = document.getElementById("kbFile");
+    const pdfCard = document.getElementById("pdfCard");
+    const pdfBadge = document.getElementById("pdfBadge");
+    const pdfDrop = document.getElementById("pdfDrop");
+    const pdfFile = document.getElementById("pdfFile");
+    const pdfInfo = document.getElementById("pdfInfo");
+    const pdfOutput = document.getElementById("pdfOutput");
+    const pdfActions = document.getElementById("pdfActions");
+    const modeSwitch = document.getElementById("modeSwitch");
+    const personaName = document.getElementById("personaName");
 
     let messages = [];
+    let mode = "professional";
     let audioCtx = null;
     let analyser = null;
     let rafId = null;
+    let currentSource = null;   // 当前正在播放的音频源（切换模式时用于打断）
 
     // 音频播放队列：流式逐句到达，按顺序串行播放
     let audioQueue = [];
@@ -309,6 +426,35 @@
       chatBox.appendChild(div);
       chatBox.scrollTop = chatBox.scrollHeight;
       return div;
+    }
+
+    // 专业模式的引用来源：在回复气泡下方展示命中的知识库文件
+    function renderSources(bubble, sources) {
+      const seen = new Set();
+      const unique = [];
+      for (const source of sources || []) {
+        if (!source || !source.source || seen.has(source.source)) continue;
+        seen.add(source.source);
+        unique.push(source);
+      }
+      if (!unique.length) return;
+
+      const box = document.createElement("div");
+      box.className = "sources";
+      const label = document.createElement("span");
+      label.className = "sources-label";
+      label.textContent = "📚 参考来源";
+      box.appendChild(label);
+
+      for (const source of unique) {
+        const chip = document.createElement("span");
+        chip.className = "source-chip";
+        chip.textContent = source.source;
+        if (source.snippet) chip.title = source.snippet;
+        box.appendChild(chip);
+      }
+      bubble.insertAdjacentElement("afterend", box);
+      chatBox.scrollTop = chatBox.scrollHeight;
     }
 
     function setStatus(mode, text) {
@@ -427,6 +573,169 @@
     });
     loadKb();
 
+    // ---------------- PDF 转文字 ----------------
+    const PDF_PREVIEW_LIMIT = 30000;
+    let pdfText = "";
+    let pdfName = "document";
+
+    async function extractPdf(file) {
+      if (!file) return;
+      if (!/\.pdf$/i.test(file.name || "")) {
+        pdfBadge.textContent = "请选择 PDF";
+        pdfInfo.textContent = "只支持 PDF 文件";
+        return;
+      }
+
+      pdfBadge.textContent = "解析中…";
+      pdfInfo.textContent = `${file.name} · 正在提取文字…`;
+      pdfOutput.hidden = true;
+      pdfActions.hidden = true;
+      pdfOutput.textContent = "";
+      pdfText = "";
+      pdfCard.open = true;
+
+      const fd = new FormData();
+      fd.append("file", file);
+      try {
+        const r = await fetch("/api/pdf/extract", { method: "POST", body: fd });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || ("HTTP " + r.status));
+
+        pdfText = d.text || "";
+        pdfName = d.filename || file.name || "document";
+        const preview = pdfText.length > PDF_PREVIEW_LIMIT
+          ? pdfText.slice(0, PDF_PREVIEW_LIMIT) + "\n\n…（仅预览前 3 万字，复制/下载为完整内容）"
+          : pdfText;
+        pdfOutput.textContent = preview;
+        pdfOutput.hidden = false;
+        pdfActions.hidden = false;
+        pdfBadge.textContent = `${d.pages} 页 · ${d.chars.toLocaleString()} 字`;
+        pdfInfo.textContent = `${d.filename} · 共 ${d.pages} 页，提取 ${d.chars.toLocaleString()} 个字符`;
+      } catch (e) {
+        pdfBadge.textContent = "解析失败";
+        pdfInfo.textContent = "解析失败：" + (e.message || "请稍后重试");
+      }
+    }
+
+    async function copyPdfText() {
+      if (!pdfText) return;
+      try {
+        await navigator.clipboard.writeText(pdfText);
+        pdfInfo.textContent = "已复制到剪贴板";
+      } catch (e) {
+        const ta = document.createElement("textarea");
+        ta.value = pdfText;
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+          document.execCommand("copy");
+          pdfInfo.textContent = "已复制到剪贴板";
+        } catch (err) {
+          pdfInfo.textContent = "复制失败，请手动选择文本";
+        }
+        ta.remove();
+      }
+    }
+
+    function downloadPdfText() {
+      if (!pdfText) return;
+      const base = (pdfName || "document").replace(/\.pdf$/i, "") || "document";
+      const blob = new Blob([pdfText], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = base + ".txt";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function clearPdf() {
+      pdfText = "";
+      pdfOutput.textContent = "";
+      pdfOutput.hidden = true;
+      pdfActions.hidden = true;
+      pdfInfo.textContent = "";
+      pdfBadge.textContent = "上传 PDF 查看文本";
+      pdfFile.value = "";
+    }
+
+    pdfDrop.addEventListener("click", () => pdfFile.click());
+    pdfFile.addEventListener("change", () => {
+      const file = (pdfFile.files || [])[0];
+      pdfFile.value = "";
+      extractPdf(file);
+    });
+    pdfDrop.addEventListener("dragover", e => {
+      e.preventDefault();
+      pdfDrop.classList.add("dragover");
+    });
+    pdfDrop.addEventListener("dragleave", () => pdfDrop.classList.remove("dragover"));
+    pdfDrop.addEventListener("drop", e => {
+      e.preventDefault();
+      pdfDrop.classList.remove("dragover");
+      extractPdf((e.dataTransfer.files || [])[0]);
+    });
+    document.getElementById("pdfCopy").addEventListener("click", copyPdfText);
+    document.getElementById("pdfDownload").addEventListener("click", downloadPdfText);
+    document.getElementById("pdfClear").addEventListener("click", clearPdf);
+
+    // ---------------- 模式切换 ----------------
+    const MODE_META = {
+      professional: {
+        name: "知语 · 知识库助手",
+        placeholder: "输入问题，或点🎤语音提问…",
+        greeting: "专业模式已开启，我是知语。你可以直接问知识库里的内容，我会标注参考来源。",
+      },
+      psychologist: {
+        name: "心语 · 心理倾听",
+        placeholder: "想聊点什么都可以…",
+        greeting: "心理医生模式已开启，我是心语。想聊点什么都可以，我在听。",
+      },
+    };
+
+    function setMode(next, greet = true) {
+      if (!MODE_META[next]) return;
+      mode = next;
+
+      document.querySelectorAll(".mode-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.mode === next);
+      });
+      personaName.textContent = MODE_META[next].name;
+      input.placeholder = MODE_META[next].placeholder;
+
+      // 切换人格时打断当前语音并清空上下文，避免两种模式串味
+      audioQueue.length = 0;
+      if (currentSource) {
+        try { currentSource.stop(); } catch (e) { /* 已经结束 */ }
+        currentSource = null;
+      }
+      if (conversationMode) {
+        exitConversation();
+      } else {
+        setStatus("", "待机中");
+      }
+
+      messages = [];
+      chatBox.innerHTML = "";
+      if (greet) addBubble(MODE_META[next].greeting, "assistant");
+    }
+
+    modeSwitch.addEventListener("click", e => {
+      const btn = e.target.closest(".mode-btn");
+      if (!btn) return;
+      const next = btn.dataset.mode;
+      if (next === mode) return;
+      if (isStreaming) {
+        setStatus("thinking", "正在回复，请稍后再切换模式");
+        return;
+      }
+      setMode(next, true);
+    });
+
+    setMode("professional", false);
+
     // 播放一段 base64 音频，返回 Promise（音频播完 resolve）
     function playAudio(base64) {
       const bin = atob(base64);
@@ -444,9 +753,11 @@
           source.buffer = buffer;
           source.connect(analyser);
           analyser.connect(audioCtx.destination);
+          currentSource = source;
           source.start();
           animateMouth();
           source.onended = () => {
+            if (currentSource === source) currentSource = null;
             cancelAnimationFrame(rafId);
             mouth.setAttribute("ry", 4);
             resolve();
@@ -521,6 +832,7 @@
       sendBtn.disabled = true;
       input.disabled = true;
       if (!conversationMode) micBtn.disabled = true;
+      document.querySelectorAll(".mode-btn").forEach(b => b.disabled = true);
       isStreaming = true;
       setStatus("thinking", "正在思考…");
 
@@ -532,7 +844,7 @@
         const resp = await fetch("/api/chat/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages }),
+          body: JSON.stringify({ messages, mode }),
         });
         if (!resp.ok) throw new Error(await resp.text());
         if (!resp.body) throw new Error("流式响应为空");
@@ -551,6 +863,10 @@
             const chunk = JSON.parse(line);
             if (chunk.type === "error") {
               throw new Error(chunk.message || "生成失败，请稍后重试");
+            }
+            if (chunk.type === "sources") {
+              renderSources(bubble, chunk.sources || []);
+              continue;
             }
             if (chunk.type && chunk.type !== "sentence") continue;
             fullText += chunk.text || "";
@@ -576,6 +892,7 @@
         sendBtn.disabled = false;
         input.disabled = false;
         if (!conversationMode) micBtn.disabled = false;
+        document.querySelectorAll(".mode-btn").forEach(b => b.disabled = false);
         isStreaming = false;
         if (!failed) maybeRestartListening();
       }

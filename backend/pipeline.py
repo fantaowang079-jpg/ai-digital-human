@@ -8,6 +8,10 @@ from backend.providers.tts import TTSProvider
 
 logger = logging.getLogger("digital_human.pipeline")
 
+MODE_PROFESSIONAL = "professional"
+MODE_PSYCHOLOGIST = "psychologist"
+SUPPORTED_MODES = (MODE_PROFESSIONAL, MODE_PSYCHOLOGIST)
+
 
 class DigitalHumanPipeline:
     """数字人对话编排核心：组装各 provider 并串联调用。"""
@@ -24,58 +28,120 @@ class DigitalHumanPipeline:
         self.tts = tts
         self.knowledge_base = knowledge_base
 
-    def build_messages(self, history: list[dict]) -> list[dict]:
-        """组装消息：角色设定 + 知识库检索上下文 + 对话历史。"""
-        system_prompt = self.config.system_prompt
-        context = self._build_kb_context(history)
-        if context:
-            system_prompt = f"{system_prompt}\n\n{context}"
+    def build_messages(
+        self, history: list[dict], mode: str = MODE_PROFESSIONAL
+    ) -> list[dict]:
+        """组装消息：模式人格 + （仅专业模式）知识库上下文 + 对话历史。"""
+        if mode not in SUPPORTED_MODES:
+            raise ValueError(f"未知模式: {mode}")
+
+        system_prompt = self._system_prompt(mode)
+        if mode == MODE_PROFESSIONAL:
+            context = self._build_kb_context(history)
+            if context:
+                system_prompt = f"{system_prompt}\n\n{context}"
         return [{"role": "system", "content": system_prompt}, *history]
 
-    def _build_kb_context(self, history: list[dict]) -> str:
-        """检索与当前问题相关的知识库片段，拼成 system prompt 上下文。
+    def _system_prompt(self, mode: str) -> str:
+        if mode == MODE_PSYCHOLOGIST:
+            prompt = self.config.psychologist_prompt
+        else:
+            prompt = self.config.professional_prompt
+        extra = (self.config.system_prompt or "").strip()
+        if extra and extra not in prompt:
+            prompt = f"{prompt}\n\n通用要求：{extra}"
+        return prompt
 
-        没有命中时返回空串（保持普通闲聊能力）；开启 KB_STRICT 后，即使没命中
-        也会注入一条「不要编造」的约束。
+    def _kb_available(self) -> bool:
+        return self.knowledge_base is not None and self.config.kb_enabled
+
+    def _professional_top_k(self) -> int:
+        # 专业模式多取一些片段，尽量把知识库里的相关字段都交给模型
+        return max(1, self.config.kb_top_k, 6)
+
+    def _professional_max_chars(self) -> int:
+        return max(1000, self.config.kb_max_context_chars, 4000)
+
+    def _build_kb_context(self, history: list[dict]) -> str:
+        """专业模式：检索知识库，拼成强制引用资料的上下文。
+
+        专业模式始终严格：没命中时明确要求模型回答「知识库中没有找到相关信息」，
+        不允许用模型自身知识编造。
         """
-        if self.knowledge_base is None or not self.config.kb_enabled:
-            return ""
+        if not self._kb_available():
+            return (
+                "【知识库资料】\n"
+                "当前知识库未启用，无法依据资料回答。请告知用户知识库暂不可用，"
+                "不要凭记忆或猜测回答专业问题。"
+            )
 
         query = self._retrieval_query(history)
         if not query:
             return ""
 
         try:
-            hits = self.knowledge_base.search(query, top_k=self.config.kb_top_k)
+            hits = self.knowledge_base.search(
+                query, top_k=self._professional_top_k()
+            )
         except Exception:
-            # 知识库故障不能拖垮对话，降级为普通回复
-            logger.exception("知识库检索失败，本轮降级为无知识库模式")
+            # 知识库故障不能拖垮对话，但专业模式仍要求不要编造
+            logger.exception("知识库检索失败，专业模式降级为未命中")
             hits = []
 
         if hits:
             return self._format_context(hits)
-        if self.config.kb_strict:
-            return (
-                "【知识库资料】\n"
-                "本次没有检索到与用户问题相关的资料。若问题需要知识库依据，"
-                "请明确回答「知识库中没有找到相关信息」，不要编造。"
-            )
-        return ""
+        return (
+            "【知识库资料】\n"
+            "本次没有检索到与用户问题相关的资料。请明确回答「知识库中没有找到相关信息」，"
+            "并说明还缺少什么信息；不要使用知识库以外的知识，也不要编造。"
+        )
 
     def _format_context(self, hits: list[dict]) -> str:
         lines = [
             "【知识库资料】",
-            "下面是检索到的资料。回答时请优先依据这些资料；资料没有覆盖的内容不要编造，"
-            "可以明确告诉用户「知识库中没有找到相关信息」。",
+            "下面是检索到的资料。回答时只能依据这些资料，不要使用资料以外的知识；"
+            "资料没有覆盖的内容不要编造。每个关键结论后用（参考：文件名）标注来源，"
+            "回答末尾单独列出「参考来源：文件名」。"
+            "如果资料不足以回答，请明确说「知识库中没有找到相关信息」。",
         ]
+        max_chars = self._professional_max_chars()
         used = sum(len(line) for line in lines)
         for i, hit in enumerate(hits, 1):
             block = f"\n[资料{i}｜来源：{hit['source']}]\n{hit['text'].strip()}"
-            if used + len(block) > self.config.kb_max_context_chars:
+            if used + len(block) > max_chars:
                 break
             lines.append(block)
             used += len(block)
         return "\n".join(lines)
+
+    def retrieve_sources(
+        self, history: list[dict], mode: str = MODE_PROFESSIONAL
+    ) -> list[dict]:
+        """返回本轮引用的知识库文档（去重），用于前端展示参考来源。"""
+        if mode != MODE_PROFESSIONAL or not self._kb_available():
+            return []
+        query = self._retrieval_query(history)
+        if not query:
+            return []
+        try:
+            hits = self.knowledge_base.search(
+                query, top_k=self._professional_top_k()
+            )
+        except Exception:
+            logger.exception("知识库检索失败，无法返回参考来源")
+            return []
+
+        seen: set[str] = set()
+        sources: list[dict] = []
+        for hit in hits:
+            name = hit["source"]
+            if name in seen:
+                continue
+            seen.add(name)
+            sources.append(
+                {"source": name, "snippet": hit["text"].strip()[:120]}
+            )
+        return sources
 
     @staticmethod
     def _retrieval_query(history: list[dict]) -> str:
@@ -92,19 +158,21 @@ class DigitalHumanPipeline:
             query = f"{user_texts[-2]}\n{query}"
         return query
 
-    def reply(self, history: list[dict]) -> tuple[str, bytes]:
+    def reply(
+        self, history: list[dict], mode: str = MODE_PROFESSIONAL
+    ) -> tuple[str, bytes]:
         """输入对话历史，返回 (回复文本, 回复音频字节)。"""
-        reply_text = self.llm.chat(self.build_messages(history))
+        reply_text = self.llm.chat(self.build_messages(history, mode))
         reply_audio = self.tts.synthesize(reply_text)
         return reply_text, reply_audio
 
-    def stream_reply(self, history: list[dict]):
+    def stream_reply(self, history: list[dict], mode: str = MODE_PROFESSIONAL):
         """流式回复：LLM 边生成、边分句、边 TTS，逐个 yield (句子文本, 音频字节)。
 
         相比 reply() 一次生成全部，本方法让前端在首句生成后即可开始播放，
         显著降低首字延迟。
         """
-        messages = self.build_messages(history)
+        messages = self.build_messages(history, mode)
         buffer = ""
         for delta in self.llm.stream_chat(messages):
             buffer += delta

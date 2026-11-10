@@ -188,33 +188,70 @@ class FakeTTS:
         return b"audio"
 
 
-def test_pipeline_injects_kb_context_into_system_prompt(kb):
-    cfg = Config(kb_top_k=2, kb_min_score=0.0, kb_enabled=True, kb_strict=False)
+def test_professional_mode_injects_kb_context_and_citation_rules(kb):
+    cfg = Config(kb_top_k=2, kb_min_score=0.0, kb_enabled=True)
     llm = FakeLLM()
     pipeline = DigitalHumanPipeline(cfg, llm, FakeTTS(), knowledge_base=kb)
 
-    text, audio = pipeline.reply([{"role": "user", "content": "水箱容量是多少"}])
+    text, audio = pipeline.reply(
+        [{"role": "user", "content": "水箱容量是多少"}], "professional"
+    )
 
     assert text == "好的。"
     assert audio == b"audio"
     system = llm.messages[0]
     assert system["role"] == "system"
+    assert "知语" in system["content"]
     assert "【知识库资料】" in system["content"]
+    assert "参考来源" in system["content"]
     assert "1.8" in system["content"]
     assert system["content"].index("【知识库资料】") > system["content"].index("你是")
 
 
-def test_pipeline_strict_mode_without_hits(tmp_path):
+def test_professional_mode_without_hits_forbids_guessing(tmp_path):
     kb = KnowledgeBase(str(tmp_path), min_score=0.9)
     (tmp_path / "无关.md").write_text("这是一篇与咖啡机无关的文档。", encoding="utf-8")
     kb.refresh(force=True)
-    cfg = Config(kb_enabled=True, kb_strict=True, kb_min_score=0.9)
+    cfg = Config(kb_enabled=True, kb_min_score=0.9)
     llm = FakeLLM()
     pipeline = DigitalHumanPipeline(cfg, llm, FakeTTS(), knowledge_base=kb)
 
-    pipeline.reply([{"role": "user", "content": "量子计算机怎么造"}])
+    pipeline.reply(
+        [{"role": "user", "content": "量子计算机怎么造"}], "professional"
+    )
 
     assert "没有检索到" in llm.messages[0]["content"]
+
+
+def test_psychologist_mode_skips_knowledge_base(kb):
+    cfg = Config(kb_top_k=2, kb_min_score=0.0, kb_enabled=True)
+    llm = FakeLLM()
+    pipeline = DigitalHumanPipeline(cfg, llm, FakeTTS(), knowledge_base=kb)
+
+    pipeline.reply(
+        [{"role": "user", "content": "水箱容量是多少"}], "psychologist"
+    )
+
+    system = llm.messages[0]["content"]
+    assert "心语" in system
+    assert "【知识库资料】" not in system
+    assert "1.8" not in system
+    assert pipeline.retrieve_sources(
+        [{"role": "user", "content": "水箱容量是多少"}], "psychologist"
+    ) == []
+
+
+def test_professional_mode_returns_deduplicated_sources(kb):
+    cfg = Config(kb_top_k=6, kb_min_score=0.0, kb_enabled=True)
+    pipeline = DigitalHumanPipeline(cfg, FakeLLM(), FakeTTS(), knowledge_base=kb)
+
+    sources = pipeline.retrieve_sources(
+        [{"role": "user", "content": "水箱容量是多少"}], "professional"
+    )
+
+    assert sources
+    assert sources[0]["source"] == "咖啡机手册.md"
+    assert len({s["source"] for s in sources}) == len(sources)
 
 
 @pytest.fixture()

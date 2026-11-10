@@ -4,6 +4,7 @@ import binascii
 import json
 import logging
 import os
+import re
 from typing import Literal
 
 from dotenv import load_dotenv
@@ -13,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.config import load_config
-from backend.knowledge import KnowledgeBase
+from backend.knowledge import KnowledgeBase, extract_pdf_text
 from backend.pipeline import DigitalHumanPipeline
 from backend.providers.llm import get_llm_provider
 from backend.providers.stt import get_stt_provider
@@ -48,6 +49,7 @@ logger = logging.getLogger("digital_human")
 app = FastAPI(title="AI 数字人对话系统", version="0.1.0")
 
 MAX_AUDIO_BYTES = 5 * 1024 * 1024
+MAX_PDF_BYTES = 20 * 1024 * 1024
 
 
 class ChatMessage(BaseModel):
@@ -58,6 +60,8 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     # 形如 [{"role": "user", "content": "你好"}, ...]
     messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+    # professional=专业模式「知语」；psychologist=心理医生模式「心语」
+    mode: Literal["professional", "psychologist"] = "professional"
 
     def as_history(self) -> list[dict]:
         return [m.model_dump() for m in self.messages]
@@ -66,8 +70,10 @@ class ChatRequest(BaseModel):
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     """核心接口：接收对话历史，返回数字人的文字回复与合成语音。"""
+    history = req.as_history()
     try:
-        reply_text, reply_audio = pipeline.reply(req.as_history())
+        reply_text, reply_audio = pipeline.reply(history, req.mode)
+        sources = pipeline.retrieve_sources(history, req.mode)
     except Exception:
         logger.exception("chat failed")
         raise HTTPException(status_code=502, detail="生成失败，请稍后重试")
@@ -75,6 +81,7 @@ def chat(req: ChatRequest):
     return {
         "reply_text": reply_text,
         "audio_base64": base64.b64encode(reply_audio).decode("ascii"),
+        "sources": sources,
     }
 
 
@@ -107,9 +114,17 @@ def chat_stream(req: ChatRequest):
     一条 {"type": "error"} 事件，让前端能区分「正常结束」与「中途失败」。
     """
 
+    history = req.as_history()
+
     def generate():
         try:
-            for sentence, audio in pipeline.stream_reply(req.as_history()):
+            # 专业模式先推送参考来源，前端在气泡下方展示引用文件
+            sources = pipeline.retrieve_sources(history, req.mode)
+            if sources:
+                yield json.dumps(
+                    {"type": "sources", "sources": sources}, ensure_ascii=False
+                ) + "\n"
+            for sentence, audio in pipeline.stream_reply(history, req.mode):
                 chunk = {
                     "type": "sentence",
                     "text": sentence,
@@ -190,6 +205,36 @@ def kb_reload():
     return {"enabled": True, **knowledge_base.stats()}
 
 
+@app.post("/api/pdf/extract")
+def pdf_extract(file: UploadFile = File(...)):
+    """PDF 转文字：上传 PDF，返回提取的纯文本、页数与字符数。"""
+    filename = os.path.basename((file.filename or "document.pdf").replace("\\", "/"))
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="只支持 PDF 文件")
+
+    data = file.file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="文件为空")
+    if len(data) > MAX_PDF_BYTES:
+        raise HTTPException(status_code=413, detail="PDF 过大（上限 20MB）")
+
+    try:
+        text, pages = extract_pdf_text(data)
+    except Exception as exc:
+        logger.warning("PDF 解析失败 %s: %s", filename, exc)
+        raise HTTPException(status_code=400, detail="PDF 解析失败，请确认文件未加密或损坏")
+
+    # 清理 PDF 排版产生的字间空格和多余空行，让预览/导出更易读
+    text = re.sub(r"(?<=[一-鿿])[ \t　]+(?=[一-鿿])", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if not text:
+        raise HTTPException(
+            status_code=400,
+            detail="没有提取到文字，可能是扫描版/图片型 PDF，需要 OCR 才能识别",
+        )
+    return {"filename": filename, "text": text, "chars": len(text), "pages": pages}
+
+
 @app.get("/api/health")
 def health(response: Response):
     response.headers["Cache-Control"] = "no-store"
@@ -202,6 +247,7 @@ def health(response: Response):
         "kb_enabled": config.kb_enabled,
         "kb_documents": kb_stats["total_documents"] if kb_stats else 0,
         "kb_chunks": kb_stats["total_chunks"] if kb_stats else 0,
+        "modes": ["professional", "psychologist"],
     }
 
 

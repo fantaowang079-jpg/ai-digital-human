@@ -11,21 +11,33 @@ import backend.main as main
 
 
 class FakePipeline:
-    def stream_reply(self, history):
+    def __init__(self, sources=None):
+        self.sources = sources or []
+        self.modes = []
+
+    def stream_reply(self, history, mode="professional"):
+        self.modes.append(mode)
         yield "你好。", b"audio-1"
         yield "今天天气不错。", b"audio-2"
 
-    def reply(self, history):
+    def reply(self, history, mode="professional"):
+        self.modes.append(mode)
         return "你好。", b"audio"
+
+    def retrieve_sources(self, history, mode="professional"):
+        return self.sources if mode == "professional" else []
 
 
 class FailingPipeline:
-    def stream_reply(self, history):
+    def stream_reply(self, history, mode="professional"):
         yield "第一句。", b"audio-1"
         raise RuntimeError("upstream 401")
 
-    def reply(self, history):
+    def reply(self, history, mode="professional"):
         raise RuntimeError("upstream 401")
+
+    def retrieve_sources(self, history, mode="professional"):
+        return []
 
 
 @pytest.fixture()
@@ -113,3 +125,77 @@ def test_stt_rejects_empty_audio(client):
     resp = client.post("/api/stt", json={"audio_base64": ""})
 
     assert resp.status_code == 400
+
+
+def test_stream_emits_sources_in_professional_mode(client, monkeypatch):
+    sources = [{"source": "手册.md", "snippet": "水箱容量 1.8 升"}]
+    monkeypatch.setattr(main, "pipeline", FakePipeline(sources=sources))
+
+    resp = client.post(
+        "/api/chat/stream",
+        json={
+            "messages": [{"role": "user", "content": "水箱多大"}],
+            "mode": "professional",
+        },
+    )
+
+    events = _events(resp)
+    assert events[0] == {"type": "sources", "sources": sources}
+    assert [e["type"] for e in events[1:]] == ["sentence", "sentence"]
+
+
+def test_stream_psychologist_mode_has_no_sources(client, monkeypatch):
+    monkeypatch.setattr(
+        main, "pipeline", FakePipeline(sources=[{"source": "手册.md", "snippet": ""}])
+    )
+
+    resp = client.post(
+        "/api/chat/stream",
+        json={
+            "messages": [{"role": "user", "content": "最近有点累"}],
+            "mode": "psychologist",
+        },
+    )
+
+    events = _events(resp)
+    assert all(e["type"] == "sentence" for e in events)
+
+
+def test_mode_is_forwarded_to_pipeline(client, monkeypatch):
+    fake = FakePipeline()
+    monkeypatch.setattr(main, "pipeline", fake)
+
+    client.post(
+        "/api/chat/stream",
+        json={
+            "messages": [{"role": "user", "content": "最近有点累"}],
+            "mode": "psychologist",
+        },
+    )
+
+    assert fake.modes == ["psychologist"]
+
+
+def test_rejects_unknown_mode(client):
+    resp = client.post(
+        "/api/chat/stream",
+        json={
+            "messages": [{"role": "user", "content": "你好"}],
+            "mode": "doctor",
+        },
+    )
+
+    assert resp.status_code == 422
+
+
+def test_chat_response_includes_sources(client, monkeypatch):
+    sources = [{"source": "手册.md", "snippet": "水箱容量 1.8 升"}]
+    monkeypatch.setattr(main, "pipeline", FakePipeline(sources=sources))
+
+    resp = client.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "水箱多大"}]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["sources"] == sources

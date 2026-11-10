@@ -171,14 +171,20 @@ def _decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def _pdf_text(data: bytes) -> str:
+def extract_pdf_text(data: bytes) -> tuple[str, int]:
+    """提取 PDF 纯文本，返回 (文本, 页数)。"""
     try:
         from pypdf import PdfReader
     except ImportError as exc:  # pragma: no cover - 依赖已写入 requirements
         raise ValueError("解析 PDF 需要安装 pypdf：pip install pypdf") from exc
 
     reader = PdfReader(io.BytesIO(data))
-    return "\n\n".join((page.extract_text() or "") for page in reader.pages)
+    text = "\n\n".join((page.extract_text() or "") for page in reader.pages)
+    return text, len(reader.pages)
+
+
+def _pdf_text(data: bytes) -> str:
+    return extract_pdf_text(data)[0]
 
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
