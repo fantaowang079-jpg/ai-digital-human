@@ -282,6 +282,37 @@ def main() -> None:
             check=True,
         )
 
+    # 删掉运行时用不到的测试/文档，减小分发包（尤其为了适配 Gitee 附件大小）
+    print("[prune] 清理测试与文档")
+    for pattern in (
+        "numpy/**/tests",
+        "numpy/**/test",
+        "numpy/doc",
+        "certifi/tests",
+        "onnxruntime/test",
+        "onnxruntime/tests",
+    ):
+        for path in site_packages.glob(pattern):
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+    for path in site_packages.glob("av/**/*.pyx"):
+        path.unlink(missing_ok=True)
+    for path in site_packages.glob("av/**/*.pxd"):
+        path.unlink(missing_ok=True)
+    for pattern in ("numpy/**/include", "numpy/**/*.pyi", "av/**/*.pyi"):
+        for path in site_packages.glob(pattern):
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+    # 这些是可选加速/开发依赖，删掉不影响 HTTP 服务和模型下载
+    for name in ("hf_xet", "watchfiles", "websockets"):
+        for path in site_packages.glob(f"{name}*"):
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+
     print("[copy] 应用代码")
     copytree(ROOT / "backend", PKG / "backend")
     copytree(ROOT / "frontend", PKG / "frontend")
@@ -291,6 +322,7 @@ def main() -> None:
         "requirements.txt",
         "LICENSE",
         "BUGLOG.md",
+        "使用指南.md",
     ):
         source = ROOT / name
         if source.exists():

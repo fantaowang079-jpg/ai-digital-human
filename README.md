@@ -2,7 +2,11 @@
 
 > 一个从零实现的精简 AI 数字人：**听 → 想 → 说 → 动** 全链路可运行。编排层与前端为自研实现，底层调用 DeepSeek（LLM）、Edge-TTS（语音合成）与 Faster-Whisper（语音识别），可插拔架构，不依赖高端 GPU。
 >
-> 📦 **Windows 用户**：可以直接下载[免安装便携版](https://github.com/fantaowang079-jpg/ai-digital-human/releases/latest)，解压后双击 `启动数字人.bat` 即可，不需要安装 Python。
+> 📦 **Windows 用户**：可以直接下载[免安装便携版](https://github.com/fantaowang079-jpg/ai-digital-human/releases/latest)，解压后双击 `start.bat`（或 `启动数字人.bat`）即可，不需要安装 Python。
+> Gitee 用户也可以从 [Gitee 发行版](https://gitee.com/zjlhslyjsf0036/ai-digital-human/releases) 下载附件。
+>
+> 📖 **不会用？** 看[使用指南](使用指南.md)；遇到问题看 [BUGLOG.md](BUGLOG.md)。
+> 维护者上传 Gitee Release 见 [GITEE_RELEASE.md](GITEE_RELEASE.md)。
 
 前端展示一个 2D 数字人形象，支持**文字或语音**输入：后端调用大模型**流式**生成回复，按句合成语音并逐句返回，网页端边接收边播放，用音频实时驱动数字人的「嘴巴」做口型动画。
 
@@ -250,8 +254,12 @@ digital-human/
 ├── knowledge/              # 知识库文档目录（含示例文档）
 ├── data/                   # 本地记忆数据库（gitignore，不提交）
 ├── tools/
-│   └── build_portable.py   # 构建 Windows 免安装便携包
+│   ├── build_portable.py   # 构建 Windows 免安装便携包
+│   └── upload_gitee_release.py  # 上传 Gitee Release（需 GITEE_TOKEN）
 ├── tests/                  # 流式协议、知识库、上下文记忆与 PDF 测试
+├── 使用指南.md             # 面向普通用户的上手说明
+├── BUGLOG.md               # 已知问题、排查步骤与反馈模板
+├── GITEE_RELEASE.md        # Gitee Release 上传说明
 ├── requirements.txt
 └── .env.example
 ```
