@@ -18,6 +18,16 @@
   const guideModal = document.getElementById("guideModal");
   const guideClose = document.getElementById("guideClose");
   const guideStart = document.getElementById("guideStart");
+  const guideSetup = document.getElementById("guideSetup");
+  const setupBtn = document.getElementById("setupBtn");
+  const setupBanner = document.getElementById("setupBanner");
+  const setupModal = document.getElementById("setupModal");
+  const setupClose = document.getElementById("setupClose");
+  const setupCurrent = document.getElementById("setupCurrent");
+  const setupKey = document.getElementById("setupKey");
+  const setupError = document.getElementById("setupError");
+  const setupMock = document.getElementById("setupMock");
+  const setupSave = document.getElementById("setupSave");
 
   let messages = [];
   let audioCtx = null;
@@ -467,19 +477,28 @@
     if (conversationMode) exitConversation();
   }
 
-  // ---- 使用说明 ----
+  // ---- 弹窗通用 ----
 
   const GUIDE_SEEN_KEY = "digitalHuman.guideSeen";
 
+  function syncBodyLock() {
+    const locked =
+      (guideModal && !guideModal.hidden) || (setupModal && !setupModal.hidden);
+    document.body.classList.toggle("modal-open", locked);
+  }
+
+  // ---- 使用说明 ----
+
   function openGuide() {
+    if (setupModal && !setupModal.hidden) closeSetup();
     guideModal.hidden = false;
-    document.body.classList.add("modal-open");
+    syncBodyLock();
     if (guideStart) guideStart.focus();
   }
 
   function closeGuide() {
     guideModal.hidden = true;
-    document.body.classList.remove("modal-open");
+    syncBodyLock();
     try {
       localStorage.setItem(GUIDE_SEEN_KEY, "1");
     } catch (e) {
@@ -497,7 +516,9 @@
       if (e.target === guideModal) closeGuide();
     });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !guideModal.hidden) closeGuide();
+      if (e.key !== "Escape") return;
+      if (setupModal && !setupModal.hidden) closeSetup();
+      else if (!guideModal.hidden) closeGuide();
     });
 
     // 首次打开（每个浏览器端口第一次）自动展示步骤
@@ -510,7 +531,163 @@
     if (!seen) openGuide();
   }
 
+  // ---- API Key ----
+
+  let setupState = {
+    provider: "mock",
+    has_key: false,
+    key_masked: "",
+    model: "",
+    base_url: "",
+  };
+
+  function updateSetupUI() {
+    const isMock = setupState.provider !== "deepseek";
+    if (setupBtn) setupBtn.classList.toggle("attention", isMock);
+    if (setupBanner) setupBanner.hidden = !isMock;
+    if (setupCurrent) {
+      setupCurrent.textContent = isMock
+        ? "当前：Mock 演示模式"
+        : "当前：DeepSeek" +
+          (setupState.key_masked ? "（" + setupState.key_masked + "）" : "（已配置）");
+    }
+    if (setupKey) {
+      setupKey.value = "";
+      setupKey.placeholder = setupState.has_key
+        ? "已保存 Key，留空则保持不变"
+        : "sk-...";
+    }
+    if (setupMock) {
+      setupMock.textContent = isMock ? "继续使用 Mock" : "切回 Mock 模式";
+    }
+  }
+
+  function openSetup() {
+    if (!setupModal) return;
+    if (guideModal && !guideModal.hidden) closeGuide();
+    setupModal.hidden = false;
+    if (setupError) setupError.hidden = true;
+    syncBodyLock();
+    if (setupKey) setupKey.focus();
+  }
+
+  function closeSetup() {
+    if (!setupModal) return;
+    setupModal.hidden = true;
+    if (setupError) setupError.hidden = true;
+    syncBodyLock();
+    if (setupBtn) setupBtn.focus();
+  }
+
+  function showSetupError(msg) {
+    if (!setupError) return;
+    setupError.textContent = msg;
+    setupError.hidden = false;
+  }
+
+  function setSetupBusy(busy) {
+    if (setupSave) {
+      setupSave.disabled = busy;
+      setupSave.textContent = busy ? "保存中…" : "保存并启用";
+    }
+    if (setupMock) setupMock.disabled = busy;
+  }
+
+  async function loadSetupStatus() {
+    try {
+      const r = await fetch("/api/setup/status");
+      if (r.ok) {
+        setupState = await r.json();
+        updateSetupUI();
+      }
+    } catch (e) {
+      /* 后端未就绪时保持默认 Mock 提示 */
+    }
+  }
+
+  async function submitSetup(provider) {
+    const key = setupKey ? setupKey.value.trim() : "";
+    if (provider === "deepseek" && !key && !setupState.has_key) {
+      showSetupError("请先粘贴 DeepSeek API Key");
+      if (setupKey) setupKey.focus();
+      return;
+    }
+
+    setSetupBusy(true);
+    try {
+      const body = { provider };
+      if (key) body.api_key = key;
+      const r = await fetch("/api/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      let d = {};
+      try {
+        d = await r.json();
+      } catch (e) {
+        /* 非 JSON 错误体 */
+      }
+      if (!r.ok) {
+        const detail =
+          d && typeof d.detail === "string" ? d.detail : "保存失败，请重试";
+        throw new Error(detail);
+      }
+      setupState = d;
+      updateSetupUI();
+      await refreshHealth();
+      closeSetup();
+      addBubble(
+        provider === "deepseek"
+          ? "已启用 DeepSeek 真实回答，可以开始对话了。"
+          : "已切换回 Mock 演示模式。",
+        "assistant"
+      );
+    } catch (e) {
+      showSetupError(e.message || "保存失败，请重试");
+    } finally {
+      setSetupBusy(false);
+    }
+  }
+
+  function bindSetup() {
+    if (!setupModal) return;
+    if (setupBtn) setupBtn.addEventListener("click", openSetup);
+    if (setupBanner) setupBanner.addEventListener("click", openSetup);
+    if (setupClose) setupClose.addEventListener("click", closeSetup);
+    if (setupSave) setupSave.addEventListener("click", () => submitSetup("deepseek"));
+    if (setupMock) setupMock.addEventListener("click", () => submitSetup("mock"));
+    if (guideSetup) {
+      guideSetup.addEventListener("click", () => {
+        closeGuide();
+        openSetup();
+      });
+    }
+    setupModal.addEventListener("click", (e) => {
+      if (e.target === setupModal) closeSetup();
+    });
+    if (setupKey) {
+      setupKey.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submitSetup("deepseek");
+        }
+      });
+    }
+  }
+
   // ---- 启动 ----
+
+  async function refreshHealth() {
+    try {
+      const r = await fetch("/api/health");
+      const d = await r.json();
+      providerEl.textContent =
+        "LLM: " + d.llm_provider + " · TTS: " + d.tts_provider + " · STT: " + d.stt_provider;
+    } catch (e) {
+      providerEl.textContent = "后端未连接";
+    }
+  }
 
   async function loadVoiceConfig() {
     try {
@@ -523,14 +700,8 @@
   }
 
   async function boot() {
-    try {
-      const r = await fetch("/api/health");
-      const d = await r.json();
-      providerEl.textContent =
-        "LLM: " + d.llm_provider + " · TTS: " + d.tts_provider + " · STT: " + d.stt_provider;
-    } catch (e) {
-      providerEl.textContent = "后端未连接";
-    }
+    await refreshHealth();
+    await loadSetupStatus();
 
     const voiceConfig = await loadVoiceConfig();
     panel = new VoicePanel({
@@ -550,5 +721,6 @@
   micBtn.addEventListener("click", toggleRecording);
 
   bindGuide();
+  bindSetup();
   boot();
 })();

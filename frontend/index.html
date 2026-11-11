@@ -9,7 +9,10 @@
 <body>
   <div class="app">
     <div class="avatar-card">
-      <button class="guide-btn" id="guideBtn" type="button">使用说明</button>
+      <div class="top-actions">
+        <button class="setup-btn" id="setupBtn" type="button">🔑 API Key</button>
+        <button class="guide-btn" id="guideBtn" type="button">使用说明</button>
+      </div>
       <div class="status" id="status"><span class="dot"></span>待机中</div>
       <!-- 数字人 SVG 形象：眼睛会眨眼，嘴巴随语音音量开合 -->
       <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -27,6 +30,10 @@
       </svg>
       <div class="status" id="provider" style="margin-top:6px;"></div>
     </div>
+
+    <button class="setup-banner" id="setupBanner" type="button" hidden>
+      当前为 Mock 演示模式，回复是占位内容 · <b>点此添加 API Key 使用真实 AI</b>
+    </button>
 
     <div class="chat-box" id="chatBox" aria-live="polite"></div>
 
@@ -103,9 +110,9 @@
           </li>
           <li>
             <b>接入真实大模型（可选）</b>
-            <p>默认是 Mock 模式（占位回复）。关闭服务器窗口，用记事本打开
-              <code>.env</code>，设置 <code>LLM_PROVIDER=deepseek</code> 并填入自己的
-              <code>DEEPSEEK_API_KEY</code>，保存后重新启动。</p>
+            <p>默认是 Mock 模式（占位回复）。点右上角「🔑 API Key」按钮，
+              粘贴自己的 DeepSeek Key 并保存，立即生效，不需要改
+              <code>.env</code>，也不需要重启。</p>
           </li>
           <li>
             <b>常见问题</b>
@@ -115,8 +122,39 @@
           </li>
         </ol>
       </div>
-      <div class="modal-foot">
+      <div class="modal-foot guide-foot">
+        <button id="guideSetup" class="btn-secondary" type="button">去添加 API Key</button>
         <button id="guideStart" type="button">开始使用</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 添加 API Key：保存后热切换 LLM，无需重启 -->
+  <div class="modal-mask" id="setupModal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
+      <div class="modal-head">
+        <h2 id="setupTitle">添加 API Key</h2>
+        <button class="modal-close" id="setupClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="setup-current" id="setupCurrent">当前：Mock 演示模式</p>
+
+        <label class="setup-field">
+          <span>DeepSeek API Key</span>
+          <input id="setupKey" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+        </label>
+
+        <p class="setup-tip">
+          Key 只保存在本机 <code>.env</code>，不会上传到别处。
+          保存后立即切换为真实回答，无需重启。
+          获取 Key：<code>platform.deepseek.com</code>
+        </p>
+
+        <p class="setup-error" id="setupError" hidden></p>
+      </div>
+      <div class="modal-foot guide-foot">
+        <button id="setupMock" class="btn-secondary" type="button">继续使用 Mock</button>
+        <button id="setupSave" type="button">保存并启用</button>
       </div>
     </div>
   </div>

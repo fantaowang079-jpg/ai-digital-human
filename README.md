@@ -17,12 +17,14 @@
 7. **多轮对话**：前端维护对话历史，后端统一注入数字人角色设定（system prompt）。
 8. **开箱即用**：便携包内置 Python 运行时与 Faster-Whisper base 模型，解压后双击
    `start.bat` 即可；页面首次打开自带分步「使用说明」，右上角可随时再看。
+9. **页面内配置 API Key**：右上角「🔑 API Key」按钮，粘贴 Key 保存后立即热切换
+   DeepSeek，无需手动改 `.env`、无需重启；Mock 模式下顶部提示条会引导配置。
 
 ## 🏗️ 架构
 
 ```
-浏览器前端 (SVG 数字人 + 口型动画 + 语音输入面板)
-        │  HTTP /api/chat/stream · /api/stt · /api/voice/config
+浏览器前端 (SVG 数字人 + 口型动画 + 语音输入面板 + API Key 配置)
+        │  HTTP /api/chat/stream · /api/stt · /api/voice/config · /api/setup
         ▼
 FastAPI 后端 (main.py)
         │
@@ -60,7 +62,8 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000
 
 浏览器打开 <http://localhost:8000>，输入文字即可看到数字人张嘴回复。
 
-> **想接入真实大模型**：编辑 `.env`，把 `LLM_PROVIDER=deepseek` 并填入 `DEEPSEEK_API_KEY`，重启即可。
+> **想接入真实大模型**：启动后点页面右上角「🔑 API Key」，粘贴 Key 并保存即可立即生效；
+> 也可以手动编辑 `.env`（`LLM_PROVIDER=deepseek` + `DEEPSEEK_API_KEY=...`）后重启。
 >
 > **首次语音识别**会通过 hf-mirror 下载 Faster-Whisper `base` 模型（约 150MB），请耐心等待；
 > 之后复用本地缓存，不再联网。便携测试包已内置 `models/faster-whisper-base/`，
@@ -80,7 +83,8 @@ pytest -q
 
 测试用 fake pipeline 覆盖流式协议：正常逐句事件、生成中途异常必须变成 `error` 事件、
 请求体角色/长度校验、STT 非法音频返回 4xx / 上游失败返回 502、中文识别参数确实传给
-faster-whisper，以及语音面板参数接口的默认值与可调范围。
+faster-whisper、语音面板参数接口的默认值与可调范围，以及 API Key 保存/热切换/脱敏/
+切回 Mock（共 22 条）。
 
 ## 📁 目录结构
 

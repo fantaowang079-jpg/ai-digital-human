@@ -26,12 +26,12 @@
 
 四、接入真实大模型（可选）
 - 默认是 Mock 模式，回复是占位文字，用于测试语音全链路
-- 关闭黑色服务器窗口，用记事本打开 .env（首次启动会自动生成）
-- 修改这两行：
-      LLM_PROVIDER=deepseek
-      DEEPSEEK_API_KEY=你自己的 Key
-- 保存后重新双击 start.bat
-- 注意：.env 里是你的私人 Key，不要发给别人
+- 点页面右上角「🔑 API Key」按钮（或页面顶部的 Mock 提示条）
+- 粘贴自己的 DeepSeek API Key，点「保存并启用」
+- 保存后立即生效，不用改 .env，也不用重启
+- 想切回 Mock：再点「🔑 API Key」→「切回 Mock 模式」
+- Key 只保存在本机 .env 里，不要把这个文件发给别人
+- 获取 Key：https://platform.deepseek.com
 
 五、语音识别模型
 - 本测试包已内置 faster-whisper base 模型：
