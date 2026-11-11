@@ -33,14 +33,24 @@
 - Key 只保存在本机 .env 里，不要把这个文件发给别人
 - 获取 Key：https://platform.deepseek.com
 
-五、语音识别模型
+五、知识库（可选）
+- 点输入框左侧的 📚 按钮打开知识库
+- 点击选择文件，或把文件拖拽到虚线框里
+- 支持 txt / md / csv / pdf / docx，单个文件不超过 10MB
+- 保持「对话时使用知识库」开启，回答会优先依据资料
+- 回答气泡下方会显示「参考：文件名」
+- 资料保存在 knowledge\ 目录；重启后自动重新索引
+- 不需要时关掉开关，或在列表里删除对应文档
+- 检索在本地完成（中文关键词匹配），不会把资料上传到别处
+
+六、语音识别模型
 - 本测试包已内置 faster-whisper base 模型：
       models\faster-whisper-base\
 - 第一次点 🎤 时需要加载模型，等待几秒属于正常
 - 如果删除了 models 目录，程序会自动从 hf-mirror 下载约 150MB 模型
   （需要联网，下载一次后复用缓存）
 
-六、常见问题
+七、常见问题
 - 双击一闪而过 / 提示缺少文件：
   多半没有完整解压，或杀毒软件隔离了 python\python.exe。
   请恢复文件，并把本文件夹加入杀毒软件白名单
@@ -54,7 +64,7 @@
   或把 .env 里的 BARGE_IN_THRESHOLD 调到 0.04–0.05
 - 需要排查：运行 diagnose.bat，把 logs\diagnose.txt 发回给测试负责人
 
-七、目录说明
+八、目录说明
 - start.bat / 启动数字人.bat   启动入口
 - run_server.bat               服务器启动脚本
 - diagnose.bat                 生成诊断报告
@@ -62,6 +72,7 @@
 - frontend\                    网页界面
 - python\                      内置 Python 运行时与依赖
 - models\                      内置语音识别模型
+- knowledge\                   知识库资料（可删除/重建）
 - .env.example                 配置模板
 - logs\                        运行日志（可删除）
 - README.md                    开发者文档

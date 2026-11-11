@@ -12,25 +12,32 @@ class DigitalHumanPipeline:
         self.llm = llm
         self.tts = tts
 
-    def build_messages(self, history: list[dict]) -> list[dict]:
-        """在对话历史前插入数字人角色设定（system prompt）。"""
-        messages = [{"role": "system", "content": self.config.system_prompt}]
+    def build_messages(
+        self, history: list[dict], kb_context: str = ""
+    ) -> list[dict]:
+        """在对话历史前插入数字人角色设定；有知识库命中时追加资料块。"""
+        system = self.config.system_prompt
+        if kb_context:
+            system = system + "\n\n" + kb_context
+        messages = [{"role": "system", "content": system}]
         messages.extend(history)
         return messages
 
-    def reply(self, history: list[dict]) -> tuple[str, bytes]:
+    def reply(
+        self, history: list[dict], kb_context: str = ""
+    ) -> tuple[str, bytes]:
         """输入对话历史，返回 (回复文本, 回复音频字节)。"""
-        reply_text = self.llm.chat(self.build_messages(history))
+        reply_text = self.llm.chat(self.build_messages(history, kb_context))
         reply_audio = self.tts.synthesize(reply_text)
         return reply_text, reply_audio
 
-    def stream_reply(self, history: list[dict]):
+    def stream_reply(self, history: list[dict], kb_context: str = ""):
         """流式回复：LLM 边生成、边分句、边 TTS，逐个 yield (句子文本, 音频字节)。
 
         相比 reply() 一次生成全部，本方法让前端在首句生成后即可开始播放，
         显著降低首字延迟。
         """
-        messages = self.build_messages(history)
+        messages = self.build_messages(history, kb_context)
         buffer = ""
         for delta in self.llm.stream_chat(messages):
             buffer += delta

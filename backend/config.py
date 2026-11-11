@@ -26,6 +26,15 @@ class Config:
     stt_beam_size: int = 5              # 5 比原版 1 更准，CPU 下延迟可接受
     stt_initial_prompt: str = "以下是普通话的句子，请用简体中文输出。"
 
+    # 知识库（RAG-lite）：本地文档切片 + 中文二元组 TF-IDF 检索，零向量库
+    kb_enabled: bool = True
+    kb_dir: str = "knowledge"
+    kb_top_k: int = 4
+    kb_min_score: float = 0.05
+    kb_max_context_chars: int = 3000
+    kb_chunk_size: int = 420
+    kb_overlap: int = 60
+
     # 语音输入（VAD）配置：由 /api/voice/config 下发给前端，避免前端写死
     vad_threshold: float = 0.02         # RMS 音量阈值
     display_max_rms: float = 0.15       # 音量条满格对应的 RMS（用于可视化缩放）
@@ -62,6 +71,13 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _resolve_model_path(model_size: str) -> str:
     """优先使用包内内置模型，其次使用 STT_MODEL_PATH；都没有则返回空串（走在线下载）。"""
     env_path = os.getenv("STT_MODEL_PATH", "").strip()
@@ -77,6 +93,12 @@ def _resolve_model_path(model_size: str) -> str:
 def load_config() -> Config:
     """从环境变量读取配置，未设置时使用默认值。"""
     model_size = os.getenv("STT_MODEL_SIZE", "base")
+    kb_dir_raw = os.getenv("KB_DIR", "knowledge").strip() or "knowledge"
+    kb_dir = (
+        kb_dir_raw
+        if os.path.isabs(kb_dir_raw)
+        else os.path.join(PROJECT_ROOT, kb_dir_raw)
+    )
     return Config(
         llm_provider=os.getenv("LLM_PROVIDER", "mock"),
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
@@ -92,6 +114,13 @@ def load_config() -> Config:
         stt_initial_prompt=os.getenv(
             "STT_INITIAL_PROMPT", "以下是普通话的句子，请用简体中文输出。"
         ),
+        kb_enabled=_env_bool("KB_ENABLED", True),
+        kb_dir=kb_dir,
+        kb_top_k=_env_int("KB_TOP_K", 4),
+        kb_min_score=_env_float("KB_MIN_SCORE", 0.05),
+        kb_max_context_chars=_env_int("KB_MAX_CONTEXT_CHARS", 3000),
+        kb_chunk_size=_env_int("KB_CHUNK_SIZE", 420),
+        kb_overlap=_env_int("KB_OVERLAP", 60),
         vad_threshold=_env_float("VAD_THRESHOLD", 0.02),
         display_max_rms=_env_float("VAD_DISPLAY_MAX_RMS", 0.15),
         silence_ms=_env_int("VAD_SILENCE_MS", 2000),

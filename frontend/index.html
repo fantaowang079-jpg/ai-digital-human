@@ -74,6 +74,7 @@
     </section>
 
     <div class="input-row">
+      <button id="kbBtn" title="知识库">📚</button>
       <button id="mic" title="语音输入">🎤</button>
       <input id="input" type="text" placeholder="打字或点🎤说话…" />
       <button id="send">发送</button>
@@ -113,6 +114,12 @@
             <p>默认是 Mock 模式（占位回复）。点右上角「🔑 API Key」按钮，
               粘贴自己的 DeepSeek Key 并保存，立即生效，不需要改
               <code>.env</code>，也不需要重启。</p>
+          </li>
+          <li>
+            <b>上传资料（可选）</b>
+            <p>点输入框左侧的 📚 按钮打开知识库，上传 txt / md / csv / pdf / docx。
+              开启「对话时使用知识库」后，回答会优先依据资料，
+              并在气泡下方标出参考文件。</p>
           </li>
           <li>
             <b>常见问题</b>
@@ -155,6 +162,39 @@
       <div class="modal-foot guide-foot">
         <button id="setupMock" class="btn-secondary" type="button">继续使用 Mock</button>
         <button id="setupSave" type="button">保存并启用</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 知识库：上传/删除资料，对话时检索并显示来源 -->
+  <div class="modal-mask" id="kbModal" hidden>
+    <div class="modal-card kb-card" role="dialog" aria-modal="true" aria-labelledby="kbTitle">
+      <div class="modal-head">
+        <h2 id="kbTitle">知识库</h2>
+        <button class="modal-close" id="kbClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="kb-toolbar">
+          <label class="kb-toggle">
+            <input type="checkbox" id="kbUseToggle" checked />
+            对话时使用知识库
+          </label>
+          <button id="kbReload" class="kb-mini" type="button">刷新索引</button>
+        </div>
+
+        <div class="kb-drop" id="kbDrop" role="button" tabindex="0">
+          <input type="file" id="kbFile" multiple
+                 accept=".txt,.md,.markdown,.csv,.pdf,.docx" hidden />
+          <p><b>点击选择文件</b>，或把文件拖到这里</p>
+          <p class="kb-hint">支持 txt / md / csv / pdf / docx，单个不超过 10MB</p>
+        </div>
+
+        <p class="kb-status" id="kbStatus"></p>
+        <p class="kb-stats" id="kbStats"></p>
+        <ul class="kb-list" id="kbList"></ul>
+      </div>
+      <div class="modal-foot">
+        <button id="kbDone" type="button">完成</button>
       </div>
     </div>
   </div>

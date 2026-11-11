@@ -28,6 +28,17 @@
   const setupError = document.getElementById("setupError");
   const setupMock = document.getElementById("setupMock");
   const setupSave = document.getElementById("setupSave");
+  const kbBtn = document.getElementById("kbBtn");
+  const kbModal = document.getElementById("kbModal");
+  const kbClose = document.getElementById("kbClose");
+  const kbDone = document.getElementById("kbDone");
+  const kbReload = document.getElementById("kbReload");
+  const kbDrop = document.getElementById("kbDrop");
+  const kbFile = document.getElementById("kbFile");
+  const kbStatus = document.getElementById("kbStatus");
+  const kbStats = document.getElementById("kbStats");
+  const kbList = document.getElementById("kbList");
+  const kbUseToggle = document.getElementById("kbUseToggle");
 
   let messages = [];
   let audioCtx = null;
@@ -48,13 +59,62 @@
   let abortedByBarge = false;    // 本轮回复是否被用户打断
   let bargeInPending = false;    // 打断后正在转入录音，避免旧逻辑重复启动聆听
 
+  // 知识库开关（记忆在浏览器）
+  const USE_KB_KEY = "digitalHuman.useKb";
+  let useKb = true;
+  try {
+    const saved = localStorage.getItem(USE_KB_KEY);
+    if (saved !== null) useKb = saved === "1";
+  } catch (e) {
+    /* localStorage 不可用时默认开启 */
+  }
+
   function addBubble(text, role) {
     const div = document.createElement("div");
     div.className = "bubble " + role;
-    div.textContent = text;
+
+    const textEl = document.createElement("div");
+    textEl.className = "bubble-text";
+    textEl.textContent = text;
+    div.appendChild(textEl);
+
+    if (role === "assistant") {
+      const sources = document.createElement("div");
+      sources.className = "sources";
+      sources.hidden = true;
+      div.appendChild(sources);
+    }
+
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
     return div;
+  }
+
+  function setBubbleText(bubble, text) {
+    const el = bubble.querySelector(".bubble-text");
+    if (el) el.textContent = text;
+    else bubble.textContent = text;
+  }
+
+  function renderSources(bubble, sources) {
+    const box = bubble.querySelector(".sources");
+    if (!box) return;
+    const names = [];
+    for (const item of sources || []) {
+      if (item && item.source && !names.includes(item.source)) {
+        names.push(item.source);
+      }
+    }
+    if (!names.length) {
+      box.hidden = true;
+      return;
+    }
+    box.textContent = "参考：" + names.join("、");
+    box.title = (sources || [])
+      .map((item) => item.source + "（相关度 " + item.score + "）")
+      .join("\n");
+    box.hidden = false;
+    chatBox.scrollTop = chatBox.scrollHeight;
   }
 
   function setStatus(mode, text) {
@@ -216,7 +276,7 @@
       const resp = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages }),
+        body: JSON.stringify({ messages, use_kb: useKb }),
         signal: controller.signal,
       });
       if (!resp.ok) throw new Error(await resp.text());
@@ -237,9 +297,13 @@
           if (chunk.type === "error") {
             throw new Error(chunk.message || "生成失败，请稍后重试");
           }
+          if (chunk.type === "sources") {
+            renderSources(bubble, chunk.sources);
+            continue;
+          }
           if (chunk.type && chunk.type !== "sentence") continue;
           fullText += chunk.text || "";
-          bubble.textContent = fullText;
+          setBubbleText(bubble, fullText);
           chatBox.scrollTop = chatBox.scrollHeight;
           enqueueAudio(chunk.audio_base64);
         }
@@ -251,7 +315,7 @@
         // 用户开口打断：不是错误，保留用户消息、不还原输入
         interrupted = true;
         abortedByBarge = false;
-        bubble.textContent = fullText ? fullText + "（已打断）" : "（已打断）";
+        setBubbleText(bubble, fullText ? fullText + "（已打断）" : "（已打断）");
       } else {
         failed = true;
         // 本轮失败：撤回刚加入的用户消息，避免下一轮把失败的问题重复发送
@@ -259,9 +323,12 @@
         if (last && last.role === "user" && last.content === text) messages.pop();
         input.value = text; // 还原输入，方便直接重试
         audioQueue.length = 0; // 丢弃尚未播放的后续音频
-        bubble.textContent = fullText
-          ? fullText + "【生成中断】" + (e.message || "请稍后重试")
-          : "出错了：" + (e.message || "请稍后重试");
+        setBubbleText(
+          bubble,
+          fullText
+            ? fullText + "【生成中断】" + (e.message || "请稍后重试")
+            : "出错了：" + (e.message || "请稍后重试")
+        );
         if (conversationMode) exitConversation();
         setStatus("", "待机中");
       }
@@ -483,7 +550,9 @@
 
   function syncBodyLock() {
     const locked =
-      (guideModal && !guideModal.hidden) || (setupModal && !setupModal.hidden);
+      (guideModal && !guideModal.hidden) ||
+      (setupModal && !setupModal.hidden) ||
+      (kbModal && !kbModal.hidden);
     document.body.classList.toggle("modal-open", locked);
   }
 
@@ -491,6 +560,7 @@
 
   function openGuide() {
     if (setupModal && !setupModal.hidden) closeSetup();
+    if (kbModal && !kbModal.hidden) closeKb();
     guideModal.hidden = false;
     syncBodyLock();
     if (guideStart) guideStart.focus();
@@ -517,7 +587,8 @@
     });
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
-      if (setupModal && !setupModal.hidden) closeSetup();
+      if (kbModal && !kbModal.hidden) closeKb();
+      else if (setupModal && !setupModal.hidden) closeSetup();
       else if (!guideModal.hidden) closeGuide();
     });
 
@@ -565,6 +636,7 @@
   function openSetup() {
     if (!setupModal) return;
     if (guideModal && !guideModal.hidden) closeGuide();
+    if (kbModal && !kbModal.hidden) closeKb();
     setupModal.hidden = false;
     if (setupError) setupError.hidden = true;
     syncBodyLock();
@@ -676,6 +748,219 @@
     }
   }
 
+  // ---- 知识库 ----
+
+  function formatSize(bytes) {
+    const n = Number(bytes) || 0;
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1024 / 1024).toFixed(1) + " MB";
+  }
+
+  function renderKb(data) {
+    const enabled = !!(data && data.enabled);
+    if (kbUseToggle) {
+      kbUseToggle.disabled = !enabled;
+      kbUseToggle.checked = enabled && useKb;
+    }
+    if (kbDrop) {
+      kbDrop.style.pointerEvents = enabled ? "" : "none";
+      kbDrop.style.opacity = enabled ? "" : ".55";
+    }
+    if (kbStats) {
+      kbStats.textContent = enabled
+        ? "共 " + data.total_documents + " 篇文档 / " + data.total_chunks + " 个片段"
+        : "后端未启用知识库（KB_ENABLED=false）";
+    }
+    if (!kbList) return;
+    kbList.textContent = "";
+
+    const docs = (data && data.documents) || [];
+    if (!docs.length) {
+      const li = document.createElement("li");
+      li.className = "kb-empty";
+      li.textContent = enabled ? "还没有资料，上传一个文件试试" : "知识库未启用";
+      kbList.appendChild(li);
+      return;
+    }
+
+    for (const doc of docs) {
+      const li = document.createElement("li");
+      li.className = "kb-item";
+
+      const name = document.createElement("span");
+      name.className = "kb-name";
+      name.textContent = doc.name;
+      name.title = doc.error ? doc.error : doc.name;
+
+      const meta = document.createElement("span");
+      meta.className = "kb-meta";
+      if (doc.error) {
+        meta.textContent = "解析失败";
+        meta.style.color = "var(--bad)";
+      } else {
+        meta.textContent = doc.chunks + " 段 · " + formatSize(doc.size);
+      }
+
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "kb-del";
+      del.textContent = "删除";
+      del.addEventListener("click", async () => {
+        if (!window.confirm("删除「" + doc.name + "」？")) return;
+        try {
+          const r = await fetch("/api/kb/" + encodeURIComponent(doc.id), {
+            method: "DELETE",
+          });
+          if (!r.ok) throw new Error("删除失败");
+          await loadKb();
+        } catch (e) {
+          if (kbStatus) kbStatus.textContent = e.message || "删除失败";
+        }
+      });
+
+      li.appendChild(name);
+      li.appendChild(meta);
+      li.appendChild(del);
+      kbList.appendChild(li);
+    }
+  }
+
+  async function loadKb() {
+    if (!kbModal) return;
+    try {
+      const r = await fetch("/api/kb");
+      if (!r.ok) throw new Error("无法读取知识库");
+      renderKb(await r.json());
+    } catch (e) {
+      if (kbStatus) kbStatus.textContent = e.message || "无法连接知识库服务";
+    }
+  }
+
+  async function uploadKbFiles(files) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    const errors = [];
+    for (let i = 0; i < list.length; i += 1) {
+      const file = list[i];
+      if (kbStatus) {
+        kbStatus.textContent =
+          "正在上传 " + (i + 1) + "/" + list.length + "：" + file.name;
+      }
+      const form = new FormData();
+      form.append("file", file, file.name);
+      // 额外传 UTF-8 文件名，规避 multipart header 的中文编码问题
+      form.append("filename", file.name);
+      try {
+        const r = await fetch("/api/kb/upload", { method: "POST", body: form });
+        let data = {};
+        try {
+          data = await r.json();
+        } catch (e) {
+          /* 非 JSON 错误体 */
+        }
+        if (!r.ok) {
+          const detail =
+            data && typeof data.detail === "string" ? data.detail : "上传失败";
+          throw new Error(detail);
+        }
+      } catch (e) {
+        errors.push(file.name + "：" + (e.message || "上传失败"));
+      }
+    }
+    if (kbFile) kbFile.value = "";
+    if (kbStatus) {
+      kbStatus.textContent = errors.length
+        ? errors.join("；")
+        : "已上传 " + list.length + " 个文件";
+    }
+    await loadKb();
+  }
+
+  function openKb() {
+    if (!kbModal) return;
+    if (guideModal && !guideModal.hidden) closeGuide();
+    if (setupModal && !setupModal.hidden) closeSetup();
+    kbModal.hidden = false;
+    if (kbStatus) kbStatus.textContent = "";
+    syncBodyLock();
+    loadKb();
+  }
+
+  function closeKb() {
+    if (!kbModal) return;
+    kbModal.hidden = true;
+    syncBodyLock();
+    if (kbBtn) kbBtn.focus();
+  }
+
+  function bindKb() {
+    if (!kbModal) return;
+    if (kbBtn) kbBtn.addEventListener("click", openKb);
+    if (kbClose) kbClose.addEventListener("click", closeKb);
+    if (kbDone) kbDone.addEventListener("click", closeKb);
+    kbModal.addEventListener("click", (e) => {
+      if (e.target === kbModal) closeKb();
+    });
+
+    if (kbUseToggle) {
+      kbUseToggle.checked = useKb;
+      kbUseToggle.addEventListener("change", () => {
+        useKb = kbUseToggle.checked;
+        try {
+          localStorage.setItem(USE_KB_KEY, useKb ? "1" : "0");
+        } catch (e) {
+          /* 忽略 */
+        }
+      });
+    }
+
+    if (kbReload) {
+      kbReload.addEventListener("click", async () => {
+        if (kbStatus) kbStatus.textContent = "正在重建索引…";
+        try {
+          const r = await fetch("/api/kb/reload", { method: "POST" });
+          if (!r.ok) throw new Error("重建索引失败");
+          await loadKb();
+          if (kbStatus) kbStatus.textContent = "索引已刷新";
+        } catch (e) {
+          if (kbStatus) kbStatus.textContent = e.message || "重建索引失败";
+        }
+      });
+    }
+
+    if (kbDrop) {
+      kbDrop.addEventListener("click", () => {
+        if (kbFile) kbFile.click();
+      });
+      kbDrop.addEventListener("keydown", (e) => {
+        if ((e.key === "Enter" || e.key === " ") && kbFile) {
+          e.preventDefault();
+          kbFile.click();
+        }
+      });
+      ["dragenter", "dragover"].forEach((name) => {
+        kbDrop.addEventListener(name, (e) => {
+          e.preventDefault();
+          kbDrop.classList.add("dragover");
+        });
+      });
+      ["dragleave", "drop"].forEach((name) => {
+        kbDrop.addEventListener(name, (e) => {
+          e.preventDefault();
+          kbDrop.classList.remove("dragover");
+        });
+      });
+      kbDrop.addEventListener("drop", (e) => {
+        uploadKbFiles(e.dataTransfer && e.dataTransfer.files);
+      });
+    }
+
+    if (kbFile) {
+      kbFile.addEventListener("change", () => uploadKbFiles(kbFile.files));
+    }
+  }
+
   // ---- 启动 ----
 
   async function refreshHealth() {
@@ -722,5 +1007,6 @@
 
   bindGuide();
   bindSetup();
+  bindKb();
   boot();
 })();

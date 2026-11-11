@@ -5,3 +5,5 @@ faster-whisper
 requests
 python-dotenv
 pydantic
+pypdf
+python-multipart

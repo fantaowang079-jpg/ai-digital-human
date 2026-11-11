@@ -147,6 +147,21 @@ svg { width: 168px; height: 168px; }
   background: #2a2f55;
   border-bottom-left-radius: 4px;
 }
+.bubble-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.sources {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: normal;
+  word-break: break-word;
+}
+.sources[hidden] { display: none; }
 
 /* ---- 语音输入面板（对话框下方） ---- */
 
@@ -332,7 +347,8 @@ button {
 }
 button:hover { opacity: .85; }
 button:disabled { opacity: .5; cursor: not-allowed; }
-button#mic { background: #3a3f63; font-size: 16px; }
+button#mic,
+button#kbBtn { background: #3a3f63; font-size: 16px; }
 button#mic.recording { background: var(--bad); }
 
 /* ---- 使用说明弹窗 ---- */
@@ -480,6 +496,113 @@ button#mic.recording { background: var(--bad); }
   line-height: 1.5;
 }
 .setup-error[hidden] { display: none; }
+
+/* ---- 知识库 ---- */
+
+.kb-card { max-width: 430px; }
+.kb-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.kb-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.kb-toggle input { accent-color: var(--accent); cursor: pointer; }
+.kb-mini {
+  flex: none;
+  padding: 6px 11px;
+  border-radius: 10px;
+  background: #2f3560;
+  color: var(--text);
+  font-size: 11px;
+}
+.kb-mini:hover { background: #3a416f; opacity: 1; }
+
+.kb-drop {
+  padding: 18px 12px;
+  border: 1px dashed rgba(108, 140, 255, .45);
+  border-radius: 14px;
+  background: rgba(108, 140, 255, .06);
+  text-align: center;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.kb-drop:hover,
+.kb-drop.dragover {
+  border-color: var(--accent);
+  background: rgba(108, 140, 255, .14);
+}
+.kb-drop p { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.kb-drop b { color: var(--text); font-weight: 600; }
+.kb-hint { margin-top: 4px; color: #7d84ac !important; font-size: 10px !important; }
+
+.kb-status {
+  min-height: 15px;
+  margin-top: 8px;
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.kb-stats {
+  margin: 8px 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.kb-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 210px;
+  overflow-y: auto;
+}
+.kb-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #202547;
+}
+.kb-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 12px;
+}
+.kb-meta {
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+}
+.kb-del {
+  flex: none;
+  padding: 3px 8px;
+  border: 1px solid rgba(248, 113, 113, .3);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--bad);
+  font-size: 11px;
+}
+.kb-del:hover { background: rgba(248, 113, 113, .12); opacity: 1; }
+.kb-empty {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
 
 body.modal-open { overflow: hidden; }
 

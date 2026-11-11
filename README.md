@@ -19,6 +19,9 @@
    `start.bat` 即可；页面首次打开自带分步「使用说明」，右上角可随时再看。
 9. **页面内配置 API Key**：右上角「🔑 API Key」按钮，粘贴 Key 保存后立即热切换
    DeepSeek，无需手动改 `.env`、无需重启；Mock 模式下顶部提示条会引导配置。
+10. **本地知识库（RAG-lite）**：网页内上传 txt / md / csv / pdf / docx，按中文二元组 +
+    TF-IDF 余弦相似度检索，命中片段注入 system prompt；回答下方显示参考文件。
+    零向量库、零 GPU，支持子目录递归与解析缓存（PDF 不重复解析）。
 
 ## 🏗️ 架构
 
@@ -28,8 +31,9 @@
         ▼
 FastAPI 后端 (main.py)
         │
+        ├── KnowledgeBase (knowledge.py) ── knowledge/ 文档目录
         ▼
-编排层 (pipeline.py)  ── 注入角色设定 → 流式分句 → 串联各 provider
+编排层 (pipeline.py)  ── 注入角色设定 + 知识库资料 → 流式分句 → 串联各 provider
         │
         ├── STT Provider  (Faster-Whisper)
         ├── LLM Provider  (Mock / DeepSeek)
@@ -65,6 +69,10 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000
 > **想接入真实大模型**：启动后点页面右上角「🔑 API Key」，粘贴 Key 并保存即可立即生效；
 > 也可以手动编辑 `.env`（`LLM_PROVIDER=deepseek` + `DEEPSEEK_API_KEY=...`）后重启。
 >
+> **知识库**：点输入框左侧 📚，上传 txt / md / csv / pdf / docx（单个 ≤10MB），
+> 保持「对话时使用知识库」开启即可；回答下方会显示参考文件。资料保存在 `knowledge/`，
+> 重启后自动重建索引（已有解析缓存）。
+>
 > **首次语音识别**会通过 hf-mirror 下载 Faster-Whisper `base` 模型（约 150MB），请耐心等待；
 > 之后复用本地缓存，不再联网。便携测试包已内置 `models/faster-whisper-base/`，
 > 开箱即可离线识别；该目录不提交到 Git 仓库（见 `.gitignore`）。
@@ -83,16 +91,17 @@ pytest -q
 
 测试用 fake pipeline 覆盖流式协议：正常逐句事件、生成中途异常必须变成 `error` 事件、
 请求体角色/长度校验、STT 非法音频返回 4xx / 上游失败返回 502、中文识别参数确实传给
-faster-whisper、语音面板参数接口的默认值与可调范围，以及 API Key 保存/热切换/脱敏/
-切回 Mock（共 22 条）。
+faster-whisper、语音面板参数接口的默认值与可调范围、API Key 保存/热切换/脱敏/
+切回 Mock，以及知识库切片/中文检索/上传删除 API/上下文注入与来源事件（共 43 条）。
 
 ## 📁 目录结构
 
 ```
 digital-human/
 ├── backend/
-│   ├── main.py             # FastAPI 入口 + 对话 API + 托管前端
+│   ├── main.py             # FastAPI 入口 + 对话/知识库/配置 API + 托管前端
 │   ├── pipeline.py         # 编排层：串联 LLM → TTS
+│   ├── knowledge.py        # 知识库：解析/切片/索引/检索
 │   ├── config.py           # 配置管理
 │   └── providers/          # 可插拔 Provider 层
 │       ├── llm.py          #   MockLLMProvider / DeepSeekProvider
@@ -104,7 +113,8 @@ digital-human/
 │   ├── voice-panel.js      # 语音面板：麦克风 / 音量条 / 判定时间条 / 打断监听
 │   └── app.js              # 对话、流式回复、音频播放、口型与使用说明
 ├── models/                 # 内置识别模型（仅便携包，已 gitignore）
-├── tests/                  # 流式协议、STT 与语音面板参数回归测试
+├── knowledge/              # 上传的知识库文档（gitignore，运行时创建）
+├── tests/                  # 流式、STT、语音面板、API Key、知识库回归测试（43 条）
 ├── requirements.txt
 └── .env.example
 ```
@@ -118,7 +128,7 @@ digital-human/
 - [x] 流式输出：LLM 流式生成 + 分句 TTS，降低首字延迟
 - [ ] 声音克隆 / 更多音色
 - [ ] 3D 形象（Live2D / 3D 模型）替代 2D SVG
-- [ ] RAG 知识库：让数字人回答特定领域问题
+- [x] RAG 知识库：网页上传资料 → 中文 TF-IDF 检索 → 注入 prompt 并显示引用来源
 - [ ] 打断功能：用户插话时中断当前回复
 
 ## 📄 License

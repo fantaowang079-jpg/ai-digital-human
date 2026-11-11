@@ -7,12 +7,13 @@ import os
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.config import load_config
+from backend.knowledge import MAX_FILE_BYTES, SUPPORTED_EXTS, KnowledgeBase
 from backend.pipeline import DigitalHumanPipeline
 from backend.providers.llm import get_llm_provider
 from backend.providers.stt import get_stt_provider
@@ -33,9 +34,33 @@ stt_provider = get_stt_provider(config)
 
 logger = logging.getLogger("digital_human")
 
+# 本地知识库：启动时扫描 knowledge/ 并建索引；目录不存在会自动创建
+try:
+    knowledge_base = (
+        KnowledgeBase(
+            config.kb_dir,
+            chunk_size=config.kb_chunk_size,
+            overlap=config.kb_overlap,
+            min_score=config.kb_min_score,
+        )
+        if config.kb_enabled
+        else None
+    )
+except Exception:
+    logger.exception("knowledge base init failed")
+    knowledge_base = None
+
 app = FastAPI(title="AI 数字人对话系统", version="0.1.0")
 
 MAX_AUDIO_BYTES = 5 * 1024 * 1024
+
+
+def _decode_upload_filename(name: str) -> str:
+    """multipart 的 filename 常被按 Latin-1 解码，这里还原成 UTF-8 中文名。"""
+    try:
+        return name.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return name
 
 
 def _mask_key(key: str) -> str:
@@ -85,6 +110,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     # 形如 [{"role": "user", "content": "你好"}, ...]
     messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+    use_kb: bool = True  # 是否检索本地知识库
 
     def as_history(self) -> list[dict]:
         return [m.model_dump() for m in self.messages]
@@ -97,11 +123,63 @@ class SetupRequest(BaseModel):
     base_url: str | None = Field(default=None, max_length=300)
 
 
+class KBSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    top_k: int = Field(default=4, ge=1, le=20)
+
+
+def _last_user_text(history: list[dict]) -> str:
+    for message in reversed(history):
+        if message.get("role") == "user":
+            return str(message.get("content", ""))
+    return ""
+
+
+def _kb_lookup(history: list[dict], use_kb: bool) -> tuple[str, list[dict]]:
+    """检索知识库，返回 (注入 prompt 的上下文, 去重后的来源列表)。"""
+    if not use_kb or knowledge_base is None:
+        return "", []
+    query = _last_user_text(history).strip()
+    if not query:
+        return "", []
+    try:
+        hits = knowledge_base.search(query, top_k=config.kb_top_k)
+        context = knowledge_base.context_from_hits(
+            hits, max_chars=config.kb_max_context_chars
+        )
+    except Exception:
+        # 检索失败不能影响正常对话，退回无知识库模式
+        logger.exception("knowledge base search failed")
+        return "", []
+
+    sources: list[dict] = []
+    seen: set[str] = set()
+    for hit in hits:
+        source = hit["source"]
+        if source in seen:
+            continue
+        seen.add(source)
+        sources.append(
+            {
+                "source": source,
+                "score": hit["score"],
+                "index": hit["index"],
+                "snippet": hit["text"][:120],
+            }
+        )
+    return context, sources
+
+
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     """核心接口：接收对话历史，返回数字人的文字回复与合成语音。"""
+    history = req.as_history()
+    kb_context, sources = _kb_lookup(history, req.use_kb)
     try:
-        reply_text, reply_audio = pipeline.reply(req.as_history())
+        if kb_context:
+            reply_text, reply_audio = pipeline.reply(history, kb_context=kb_context)
+        else:
+            reply_text, reply_audio = pipeline.reply(history)
     except Exception:
         logger.exception("chat failed")
         raise HTTPException(status_code=502, detail="生成失败，请稍后重试")
@@ -109,6 +187,7 @@ def chat(req: ChatRequest):
     return {
         "reply_text": reply_text,
         "audio_base64": base64.b64encode(reply_audio).decode("ascii"),
+        "sources": sources,
     }
 
 
@@ -146,9 +225,22 @@ def chat_stream(req: ChatRequest):
     一条 {"type": "error"} 事件，让前端能区分「正常结束」与「中途失败」。
     """
 
+    history = req.as_history()
+    kb_context, sources = _kb_lookup(history, req.use_kb)
+
     def generate():
         try:
-            for sentence, audio in pipeline.stream_reply(req.as_history()):
+            # 先告诉前端本轮引用了哪些文件
+            if sources:
+                yield json.dumps(
+                    {"type": "sources", "sources": sources}, ensure_ascii=False
+                ) + "\n"
+            stream = (
+                pipeline.stream_reply(history, kb_context=kb_context)
+                if kb_context
+                else pipeline.stream_reply(history)
+            )
+            for sentence, audio in stream:
                 chunk = {
                     "type": "sentence",
                     "text": sentence,
@@ -256,6 +348,88 @@ def setup(req: SetupRequest):
         bool(config.deepseek_api_key),
     )
     return setup_status()
+
+
+def _kb_overview() -> dict:
+    if knowledge_base is None:
+        return {
+            "enabled": False,
+            "documents": [],
+            "total_documents": 0,
+            "total_chunks": 0,
+            "supported_exts": sorted(SUPPORTED_EXTS),
+            "max_file_mb": MAX_FILE_BYTES // (1024 * 1024),
+        }
+    data = knowledge_base.stats()
+    data.update(
+        {
+            "enabled": True,
+            "supported_exts": sorted(SUPPORTED_EXTS),
+            "max_file_mb": MAX_FILE_BYTES // (1024 * 1024),
+        }
+    )
+    return data
+
+
+@app.get("/api/kb")
+def kb_overview(response: Response):
+    """知识库概览：文档列表、片段数、支持格式。"""
+    response.headers["Cache-Control"] = "no-store"
+    return _kb_overview()
+
+
+@app.post("/api/kb/upload")
+async def kb_upload(
+    file: UploadFile = File(...), filename: str | None = Form(None)
+):
+    """上传文档并重建索引；无法解析的文件不会落盘。
+
+    前端会额外提交一个 UTF-8 的 filename 表单字段，避免 multipart
+    header 里的中文文件名被按 Latin-1 解码后丢失。
+    """
+    if knowledge_base is None:
+        raise HTTPException(status_code=400, detail="知识库未启用")
+    data = await file.read()
+    if filename and filename.strip():
+        name = filename.strip()
+    else:
+        name = _decode_upload_filename(file.filename or "document.txt")
+    try:
+        return knowledge_base.add_document(name, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        logger.exception("kb upload failed")
+        raise HTTPException(status_code=500, detail="保存文档失败，请检查写入权限")
+
+
+@app.delete("/api/kb/{doc_id}")
+def kb_delete(doc_id: str):
+    if knowledge_base is None:
+        raise HTTPException(status_code=400, detail="知识库未启用")
+    if not knowledge_base.remove_document(doc_id):
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return {"ok": True}
+
+
+@app.post("/api/kb/reload")
+def kb_reload():
+    if knowledge_base is None:
+        raise HTTPException(status_code=400, detail="知识库未启用")
+    knowledge_base.refresh(force=True)
+    return _kb_overview()
+
+
+@app.post("/api/kb/search")
+def kb_search(req: KBSearchRequest):
+    """调试/预览用：直接查看某个问题会命中哪些片段。"""
+    if knowledge_base is None:
+        return {"hits": []}
+    try:
+        return {"hits": knowledge_base.search(req.query, top_k=req.top_k)}
+    except Exception:
+        logger.exception("kb search failed")
+        raise HTTPException(status_code=500, detail="检索失败")
 
 
 # 托管前端静态页面（放在最后，避免覆盖 /api 路由）
