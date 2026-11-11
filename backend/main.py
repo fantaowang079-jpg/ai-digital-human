@@ -8,7 +8,7 @@ import re
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -23,7 +23,8 @@ from backend.providers.tts import get_tts_provider
 
 # 项目根目录（backend 的上一级）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+load_dotenv(ENV_PATH)
 
 config = load_config()
 
@@ -100,6 +101,33 @@ def _remember_exchange(
         memory_store.maybe_summarize(session_id, mode, _summarize_memory)
     except Exception:
         logger.exception("写入长期记忆失败")
+
+
+def _update_env_file(values: dict[str, str]) -> None:
+    """更新（或创建）.env 中的键值，保留其它配置和注释。"""
+    lines: list[str] = []
+    if os.path.exists(ENV_PATH):
+        with open(ENV_PATH, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+
+    remaining = dict(values)
+    output: list[str] = []
+    for line in lines:
+        stripped = line.lstrip()
+        if "=" in line and not stripped.startswith("#"):
+            key = line.split("=", 1)[0].strip()
+            if key in remaining:
+                output.append(f"{key}={remaining.pop(key)}")
+                continue
+        output.append(line)
+
+    for key, value in remaining.items():
+        output.append(f"{key}={value}")
+
+    tmp = ENV_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(output) + "\n")
+    os.replace(tmp, ENV_PATH)
 
 logger = logging.getLogger("digital_human")
 
@@ -369,6 +397,48 @@ def memory_clear(
     return {"ok": True, "session_id": session_id, "mode": mode}
 
 
+# ---------------------------------------------------------------- 首次配置
+_ALLOWED_SETUP_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
+class SetupRequest(BaseModel):
+    api_key: str = Field(min_length=8, max_length=200)
+
+
+@app.get("/api/setup/status")
+def setup_status():
+    return {
+        "provider": config.llm_provider,
+        "key_configured": bool(config.deepseek_api_key),
+    }
+
+
+@app.post("/api/setup")
+def setup(req: SetupRequest, request: Request):
+    """首次使用向导：保存 DeepSeek API Key 到本机 .env，并热切换 LLM。"""
+    host = request.client.host if request.client else ""
+    if host not in _ALLOWED_SETUP_HOSTS:
+        raise HTTPException(status_code=403, detail="只允许在本机配置 API Key")
+
+    key = req.api_key.strip()
+    if not key.startswith("sk-") or len(key) < 10:
+        raise HTTPException(status_code=400, detail="API Key 格式不正确（应以 sk- 开头）")
+
+    try:
+        _update_env_file({"LLM_PROVIDER": "deepseek", "DEEPSEEK_API_KEY": key})
+    except OSError as exc:
+        logger.exception("写入 .env 失败")
+        raise HTTPException(status_code=500, detail=f"无法写入 .env：{exc}")
+
+    config.llm_provider = "deepseek"
+    config.deepseek_api_key = key
+    os.environ["LLM_PROVIDER"] = "deepseek"
+    os.environ["DEEPSEEK_API_KEY"] = key
+    pipeline.llm = get_llm_provider(config)
+    logger.info("API Key 已配置，LLM 切换为 deepseek")
+    return {"ok": True, "provider": config.llm_provider}
+
+
 @app.get("/api/health")
 def health(response: Response):
     response.headers["Cache-Control"] = "no-store"
@@ -383,6 +453,7 @@ def health(response: Response):
         "kb_chunks": kb_stats["total_chunks"] if kb_stats else 0,
         "modes": ["professional", "psychologist"],
         "memory_enabled": config.memory_enabled,
+        "key_configured": bool(config.deepseek_api_key),
     }
 
 

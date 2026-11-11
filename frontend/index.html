@@ -234,6 +234,48 @@
     }
     .memory-item.user .memory-role { color: #9db7ff; }
 
+    /* 首次配置 API Key */
+    .link-btn {
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      padding: 2px 4px;
+      margin-top: 4px;
+      text-decoration: underline;
+    }
+    .link-btn:hover { color: var(--text); opacity: 1; }
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(5, 8, 20, .82);
+    }
+    .modal-overlay[hidden] { display: none; }
+    .modal {
+      width: 100%;
+      max-width: 400px;
+      background: var(--card);
+      border-radius: 18px;
+      padding: 22px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, .55);
+    }
+    .modal h3 { font-size: 17px; margin-bottom: 10px; }
+    .modal p {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 12px;
+    }
+    .modal input { width: 100%; margin-bottom: 12px; }
+    .modal-actions { display: flex; gap: 8px; }
+    .modal-actions button { flex: 1; }
+    .modal-hint { margin-bottom: 0 !important; font-size: 12px !important; }
+    .modal-hint a { color: var(--accent); }
+
     .chat-box {
       background: var(--card);
       border-radius: 20px;
@@ -343,6 +385,7 @@
         <ellipse id="mouth" cx="100" cy="128" rx="13" ry="4" fill="#c0454f" />
       </svg>
       <div class="status" id="provider" style="margin-top:6px;"></div>
+      <button class="link-btn" id="setupOpen">配置 API Key</button>
     </div>
 
     <!-- 上下文记忆：本地持久化，刷新/重启后仍能回顾以前的对话 -->
@@ -394,6 +437,23 @@
     </div>
   </div>
 
+  <!-- 首次使用：填写自己的 DeepSeek API Key（只保存在本机） -->
+  <div class="modal-overlay" id="setupModal" hidden>
+    <div class="modal">
+      <h3>首次使用：配置 DeepSeek API Key</h3>
+      <p>
+        数字人需要调用 DeepSeek 大模型。请在下方粘贴你的 API Key，它只会保存在本机
+        <code>.env</code> 文件里，不会上传到任何服务器。
+      </p>
+      <input id="setupKey" type="password" placeholder="sk-..." autocomplete="off" />
+      <div class="modal-actions">
+        <button id="setupSave">保存并开始</button>
+        <button id="setupSkip" class="ghost">先试用 Mock 模式</button>
+      </div>
+      <p class="modal-hint" id="setupHint">没有 Key？<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">去 DeepSeek 开放平台获取</a></p>
+    </div>
+  </div>
+
   <script>
     const chatBox = document.getElementById("chatBox");
     const input = document.getElementById("input");
@@ -422,6 +482,9 @@
     const memoryInfo = document.getElementById("memoryInfo");
     const memorySummary = document.getElementById("memorySummary");
     const memoryList = document.getElementById("memoryList");
+    const setupModal = document.getElementById("setupModal");
+    const setupKey = document.getElementById("setupKey");
+    const setupHint = document.getElementById("setupHint");
 
     // 浏览器本地会话 ID：同一个浏览器刷新/重启后仍然使用同一份长期记忆
     function getSessionId() {
@@ -471,15 +534,16 @@
     let silenceAccum = 0;
     let recordStartTime = 0;
 
-    (async () => {
+    async function loadHealth() {
       try {
-        const r = await fetch("/api/health");
+        const r = await fetch("/api/health", { cache: "no-store" });
         const d = await r.json();
         providerEl.textContent = `LLM: ${d.llm_provider} · TTS: ${d.tts_provider} · STT: ${d.stt_provider}`;
       } catch (e) {
         providerEl.textContent = "后端未连接";
       }
-    })();
+    }
+    loadHealth();
 
     function addBubble(text, role) {
       const div = document.createElement("div");
@@ -898,6 +962,63 @@
     document.getElementById("memoryClear").addEventListener("click", clearMemory);
 
     setMode("professional");
+
+    // ---------------- 首次配置 API Key ----------------
+    function openSetup() {
+      setupHint.innerHTML =
+        '没有 Key？<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">去 DeepSeek 开放平台获取</a>';
+      setupModal.hidden = false;
+      setupKey.focus();
+    }
+
+    async function saveSetupKey() {
+      const key = setupKey.value.trim();
+      if (!key) {
+        setupHint.textContent = "请先粘贴 API Key";
+        return;
+      }
+      setupHint.textContent = "正在保存…";
+      try {
+        const r = await fetch("/api/setup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ api_key: key }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || ("HTTP " + r.status));
+        localStorage.setItem("dh_setup_skipped", "0");
+        setupModal.hidden = true;
+        setupKey.value = "";
+        await loadHealth();
+        addBubble("API Key 已保存，现在可以使用真实 AI 回复了。", "assistant");
+      } catch (e) {
+        setupHint.textContent = "保存失败：" + (e.message || "请稍后重试");
+      }
+    }
+
+    async function checkSetup() {
+      try {
+        const r = await fetch("/api/setup/status", { cache: "no-store" });
+        if (!r.ok) return;   // 老版本后端不弹窗
+        const d = await r.json();
+        if (!d.key_configured && localStorage.getItem("dh_setup_skipped") !== "1") {
+          openSetup();
+        }
+      } catch (e) {
+        // 后端未连接时保持安静，页面其它部分会提示
+      }
+    }
+
+    document.getElementById("setupOpen").addEventListener("click", openSetup);
+    document.getElementById("setupSave").addEventListener("click", saveSetupKey);
+    document.getElementById("setupSkip").addEventListener("click", () => {
+      localStorage.setItem("dh_setup_skipped", "1");
+      setupModal.hidden = true;
+    });
+    setupKey.addEventListener("keydown", e => {
+      if (e.key === "Enter") saveSetupKey();
+    });
+    checkSetup();
 
     // 播放一段 base64 音频，返回 Promise（音频播完 resolve）
     function playAudio(base64) {

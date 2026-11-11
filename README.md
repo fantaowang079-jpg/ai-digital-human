@@ -1,6 +1,8 @@
 # AI 数字人对话系统
 
 > 一个从零实现的精简 AI 数字人：**听 → 想 → 说 → 动** 全链路可运行。编排层与前端为自研实现，底层调用 DeepSeek（LLM）、Edge-TTS（语音合成）与 Faster-Whisper（语音识别），可插拔架构，不依赖高端 GPU。
+>
+> 📦 **Windows 用户**：可以直接下载[免安装便携版](https://github.com/fantaowang079-jpg/ai-digital-human/releases/latest)，解压后双击 `启动数字人.bat` 即可，不需要安装 Python。
 
 前端展示一个 2D 数字人形象，支持**文字或语音**输入：后端调用大模型**流式**生成回复，按句合成语音并逐句返回，网页端边接收边播放，用音频实时驱动数字人的「嘴巴」做口型动画。
 
@@ -68,6 +70,26 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000
 >
 > **首次语音识别**会通过 hf-mirror 下载 Faster-Whisper `base` 模型（约 150MB），请耐心等待；
 > 之后复用本地缓存，不再联网。
+
+## 📦 Windows 免安装版（给别人演示）
+
+不想让对方安装 Python？构建一个自带运行环境的便携包：
+
+```bash
+.venv\Scripts\python.exe tools\build_portable.py
+```
+
+产物是 `dist/ai-digital-human-windows.zip`。对方只需要：
+
+1. 解压到桌面或文档目录（不要放在 `Program Files`，可能没有写权限）。
+2. 双击 `启动数字人.bat`。
+3. 浏览器自动打开 `http://localhost:8000`。
+4. 首次使用按页面提示粘贴自己的 DeepSeek API Key（只保存在本机 `.env`，不会上传）；
+   没有 Key 可以点「先试用 Mock 模式」体验界面和语音。
+
+包内自带 Python 3.12 embeddable 与全部运行依赖，**不需要安装 Python**；只包含示例
+知识库，不会打包你本地的文档、记忆或 API Key。首次使用麦克风会下载 Faster-Whisper
+模型（约 150MB），需要联网；DeepSeek 对话和 Edge-TTS 也需要联网，知识库与记忆在本地。
 
 ## 🎭 两种模式
 
@@ -223,6 +245,8 @@ digital-human/
 │   └── index.html          # 数字人形象 + 口型动画 + 对话/知识库/PDF/记忆界面
 ├── knowledge/              # 知识库文档目录（含示例文档）
 ├── data/                   # 本地记忆数据库（gitignore，不提交）
+├── tools/
+│   └── build_portable.py   # 构建 Windows 免安装便携包
 ├── tests/                  # 流式协议、知识库、上下文记忆与 PDF 测试
 ├── requirements.txt
 └── .env.example
@@ -237,6 +261,7 @@ digital-human/
 - [x] RAG 知识库：上传文档，让数字人回答特定领域问题
 - [x] 双模式：专业问答「知语」/ 心理陪伴「心语」
 - [x] 上下文记忆：本地持久化 + 滚动摘要 + 相关回忆检索
+- [x] Windows 免安装便携包：内置 Python，解压双击即可运行
 - [ ] 声音克隆 / 更多音色
 - [ ] 3D 形象（Live2D / 3D 模型）替代 2D SVG
 - [ ] 打断功能：用户插话时中断当前回复

@@ -1,7 +1,9 @@
 fastapi
 uvicorn[standard]
 edge-tts
-faster-whisper
+# 固定已验证可用的语音识别组合，避免新版 av 破坏 faster-whisper
+faster-whisper==1.2.1
+av==14.2.0
 requests
 python-dotenv
 pydantic
