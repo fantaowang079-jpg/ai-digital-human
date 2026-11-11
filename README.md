@@ -157,6 +157,28 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000
 | `{"type":"sources","sources":[...]}` | 专业模式命中的知识库文件 |
 | `{"type":"error","message":"..."}` | 生成中途失败 |
 
+## 🔄 自动检查更新
+
+页面头像下方显示当前版本和「检查更新」按钮：
+
+- 打开页面 4 秒后自动检查一次，之后每 6 小时检查一次；也可以手动点「检查更新」。
+- 后端 `GET /api/update` 优先查询 **Gitee Release**，失败再查 **GitHub Release**；
+  成功结果缓存 1 小时，失败缓存 5 分钟，`?refresh=1` 可强制刷新。
+- 发现新版本时显示**非阻塞提示条**，可以「去下载」或「忽略」；忽略只针对当前版本。
+- 版本号在 `backend/version.py` 的 `APP_VERSION`，发布新版本时同步修改。
+
+配置项：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `UPDATE_CHECK_ENABLED` | `true` | 是否启用自动检查更新 |
+| `UPDATE_CHECK_GITEE_REPO` | `zjlhslyjsf0036/ai-digital-human` | Gitee 仓库 |
+| `UPDATE_CHECK_GITHUB_REPO` | `fantaowang079-jpg/ai-digital-human` | GitHub 仓库 |
+| `UPDATE_CHECK_TTL_SECONDS` | `3600` | 成功结果缓存秒数 |
+
+> GitHub API 对匿名请求有每小时限流；Gitee 查询优先，Gitee Release 上传后国内用户会更稳。
+> 检查失败不会影响对话功能，只显示「检查失败」，稍后重试即可。
+
 ## 📚 知识库：把数字人变成专有领域问答助手
 
 打开页面后展开「📚 知识库」面板，点击或拖拽文件上传即可。上传成功会立即重建索引，
@@ -248,6 +270,7 @@ digital-human/
 │   ├── pipeline.py         # 编排层：记忆 + 知识库检索 → 提示词注入 → 逐词流式
 │   ├── memory.py           # 上下文记忆：SQLite / 滚动摘要 / 相关回忆
 │   ├── knowledge.py        # 知识库与 PDF 解析：多格式解析 / 切片 / TF-IDF 检索
+│   ├── version.py          # 应用版本号（自动更新检查用）
 │   ├── config.py           # 配置管理
 │   └── providers/          # 可插拔 Provider 层
 │       ├── llm.py          #   MockLLMProvider / DeepSeekProvider

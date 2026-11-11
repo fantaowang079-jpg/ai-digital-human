@@ -84,6 +84,16 @@
       font-size: 12px;
       border-radius: 9px;
     }
+    .update-banner { border-color: var(--accent); }
+    .update-widget {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
     .mic-meter {
       height: 4px;
       width: 70%;
@@ -459,6 +469,15 @@
       </div>
     </div>
 
+    <!-- 自动检查更新：非阻塞提示条 -->
+    <div class="setup-banner update-banner" id="updateBanner" hidden>
+      <span id="updateBannerText">发现新版本</span>
+      <div class="setup-banner-actions">
+        <button id="updateDownload">去下载</button>
+        <button id="updateIgnore" class="ghost">忽略</button>
+      </div>
+    </div>
+
     <div class="avatar-card">
       <div class="persona-name" id="personaName">知语 · 知识库助手</div>
       <div class="status" id="status"><span class="dot"></span>待机中</div>
@@ -480,6 +499,10 @@
       <div class="status" id="provider" style="margin-top:6px;"></div>
       <button class="link-btn" id="setupOpen">配置 API Key</button>
       <button class="link-btn" id="guideOpen">使用指南</button>
+      <div class="update-widget">
+        <span id="updateVersion">版本检查中…</span>
+        <button class="link-btn" id="updateCheck">检查更新</button>
+      </div>
     </div>
 
     <!-- 上下文记忆：本地持久化，刷新/重启后仍能回顾以前的对话 -->
@@ -678,6 +701,9 @@
     const guideModal = document.getElementById("guideModal");
     const micMeter = document.getElementById("micMeter");
     const micMeterBar = document.getElementById("micMeterBar");
+    const updateVersion = document.getElementById("updateVersion");
+    const updateBanner = document.getElementById("updateBanner");
+    const updateBannerText = document.getElementById("updateBannerText");
 
     // 浏览器本地会话 ID：同一个浏览器刷新/重启后仍然使用同一份长期记忆
     function getSessionId() {
@@ -1237,6 +1263,75 @@
     });
 
     checkSetup();
+
+    // ---------------- 自动检查更新 ----------------
+    let updateInfo = null;
+
+    async function checkUpdate(manual = false) {
+      if (manual) updateVersion.textContent = "检查中…";
+      try {
+        const r = await fetch(
+          `/api/update${manual ? "?refresh=1" : ""}`,
+          { cache: "no-store" }
+        );
+        const d = await r.json();
+
+        if (!d.enabled) {
+          updateVersion.textContent = "自动更新已关闭";
+          updateBanner.hidden = true;
+          return;
+        }
+
+        if (d.error) {
+          updateVersion.textContent = `v${d.current || "?"} · 检查失败`;
+          if (manual) addBubble("检查更新失败：" + d.error, "assistant");
+          return;
+        }
+
+        updateInfo = d;
+        if (d.update_available) {
+          updateVersion.textContent = `v${d.current} → ${d.latest}`;
+          const ignored = localStorage.getItem("dh_ignored_update");
+          if (ignored !== d.latest) {
+            updateBannerText.textContent =
+              `发现新版本 ${d.latest}（当前 ${d.current}）`;
+            updateBanner.hidden = false;
+          }
+          if (manual) {
+            addBubble(`发现新版本 ${d.latest}，可以点顶部提示去下载。`, "assistant");
+          }
+        } else {
+          updateVersion.textContent = `v${d.current}（已是最新）`;
+          updateBanner.hidden = true;
+          if (manual) {
+            addBubble(`当前已是最新版本 v${d.current}。`, "assistant");
+          }
+        }
+      } catch (e) {
+        updateVersion.textContent = "检查失败";
+        if (manual) {
+          addBubble("检查更新失败：" + (e.message || "网络错误"), "assistant");
+        }
+      }
+    }
+
+    document.getElementById("updateCheck").addEventListener("click", () => {
+      checkUpdate(true);
+    });
+    document.getElementById("updateDownload").addEventListener("click", () => {
+      const url = updateInfo && (updateInfo.download_url || updateInfo.release_url);
+      if (url) window.open(url, "_blank", "noopener");
+    });
+    document.getElementById("updateIgnore").addEventListener("click", () => {
+      if (updateInfo && updateInfo.latest) {
+        localStorage.setItem("dh_ignored_update", updateInfo.latest);
+      }
+      updateBanner.hidden = true;
+    });
+
+    // 打开页面 4 秒后自动检查，之后每 6 小时一次
+    setTimeout(() => checkUpdate(false), 4000);
+    setInterval(() => checkUpdate(false), 6 * 60 * 60 * 1000);
 
     // 播放一段 base64 音频，返回 Promise（音频播完 resolve）
     function playAudio(base64) {

@@ -69,6 +69,12 @@ class Config:
     memory_keep_verbatim: int = 12      # 最近多少条消息原样保留
     memory_summarize_after: int = 12    # 未摘要旧消息达到多少条后自动压缩
 
+    # 自动检查更新
+    update_check_enabled: bool = True
+    update_check_gitee_repo: str = "zjlhslyjsf0036/ai-digital-human"
+    update_check_github_repo: str = "fantaowang079-jpg/ai-digital-human"
+    update_check_ttl_seconds: int = 3600
+
 
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
@@ -121,4 +127,12 @@ def load_config() -> Config:
         memory_db_path=os.getenv("MEMORY_DB_PATH", ""),
         memory_keep_verbatim=_env_int("MEMORY_KEEP_VERBATIM", 12),
         memory_summarize_after=_env_int("MEMORY_SUMMARIZE_AFTER", 12),
+        update_check_enabled=_env_bool("UPDATE_CHECK_ENABLED", True),
+        update_check_gitee_repo=os.getenv(
+            "UPDATE_CHECK_GITEE_REPO", "zjlhslyjsf0036/ai-digital-human"
+        ),
+        update_check_github_repo=os.getenv(
+            "UPDATE_CHECK_GITHUB_REPO", "fantaowang079-jpg/ai-digital-human"
+        ),
+        update_check_ttl_seconds=_env_int("UPDATE_CHECK_TTL_SECONDS", 3600),
     )

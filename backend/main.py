@@ -6,8 +6,11 @@ import logging
 import logging.handlers
 import os
 import re
+import threading
+import time
 from typing import Literal
 
+import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
@@ -21,6 +24,7 @@ from backend.pipeline import DigitalHumanPipeline
 from backend.providers.llm import get_llm_provider
 from backend.providers.stt import get_stt_provider
 from backend.providers.tts import get_tts_provider
+from backend.version import APP_VERSION
 
 # 项目根目录（backend 的上一级）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -160,6 +164,98 @@ def _update_env_file(values: dict[str, str]) -> None:
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write("\n".join(output) + "\n")
     os.replace(tmp, ENV_PATH)
+
+
+# ---------------------------------------------------------------- 自动检查更新
+_UPDATE_CACHE: dict = {"at": 0.0, "ttl": 0, "payload": None}
+_UPDATE_LOCK = threading.Lock()
+
+
+def _version_key(tag: str) -> tuple[int, ...]:
+    """v1.2.3 -> (1, 2, 3)；无法解析的标签（如 voice-original）返回 (0,)。"""
+    numbers = re.findall(r"\d+", tag or "")
+    return tuple(int(n) for n in numbers[:4]) if numbers else (0,)
+
+
+def _is_newer(latest: str, current: str) -> bool:
+    return _version_key(latest) > _version_key(current)
+
+
+def _release_info(
+    tag: str,
+    release_url: str,
+    notes: str,
+    assets: list[dict] | None,
+    source: str,
+) -> dict:
+    download_url = release_url
+    for asset in assets or []:
+        name = asset.get("name") or asset.get("filename") or ""
+        if name == "ai-digital-human-windows.zip":
+            download_url = (
+                asset.get("browser_download_url")
+                or asset.get("download_url")
+                or asset.get("url")
+                or release_url
+            )
+            break
+    return {
+        "version": tag,
+        "release_url": release_url,
+        "download_url": download_url,
+        "notes": (notes or "")[:500],
+        "source": source,
+    }
+
+
+def _query_latest_release() -> dict | None:
+    """优先 Gitee（国内访问稳），失败再查 GitHub。"""
+    headers = {"User-Agent": "ai-digital-human-update-check"}
+
+    try:
+        resp = requests.get(
+            f"https://gitee.com/api/v5/repos/{config.update_check_gitee_repo}/releases",
+            params={"per_page": 1},
+            headers=headers,
+            timeout=6,
+        )
+        if resp.ok:
+            releases = resp.json() or []
+            if releases:
+                rel = releases[0]
+                tag = rel.get("tag_name") or ""
+                if _version_key(tag) != (0,):
+                    return _release_info(
+                        tag,
+                        rel.get("html_url") or rel.get("url") or "",
+                        rel.get("body") or rel.get("description") or "",
+                        rel.get("assets") or rel.get("attach_files") or [],
+                        "gitee",
+                    )
+    except (requests.RequestException, ValueError, TypeError):
+        logger.warning("Gitee 更新检查失败", exc_info=True)
+
+    try:
+        resp = requests.get(
+            f"https://api.github.com/repos/{config.update_check_github_repo}/releases/latest",
+            headers={**headers, "Accept": "application/vnd.github+json"},
+            timeout=6,
+        )
+        if resp.status_code == 200:
+            rel = resp.json()
+            tag = rel.get("tag_name") or ""
+            if tag:
+                return _release_info(
+                    tag,
+                    rel.get("html_url") or "",
+                    rel.get("body") or "",
+                    rel.get("assets") or [],
+                    "github",
+                )
+    except (requests.RequestException, ValueError, TypeError):
+        logger.warning("GitHub 更新检查失败", exc_info=True)
+    return None
+
 
 app = FastAPI(title="AI 数字人对话系统", version="0.1.0")
 
@@ -478,6 +574,70 @@ def setup(req: SetupRequest, request: Request):
     return {"ok": True, "provider": config.llm_provider}
 
 
+@app.get("/api/update")
+def update_check(refresh: bool = False):
+    """检查 Gitee/GitHub 最新 Release，返回是否有新版本。
+
+    结果缓存 1 小时（失败缓存 5 分钟），`?refresh=1` 可强制刷新。
+    """
+    if not config.update_check_enabled:
+        return {
+            "enabled": False,
+            "current": APP_VERSION,
+            "latest": None,
+            "update_available": False,
+            "release_url": "",
+            "download_url": "",
+            "notes": "",
+            "source": "",
+            "error": None,
+            "checked_at": int(time.time()),
+        }
+
+    now = time.time()
+    with _UPDATE_LOCK:
+        payload = _UPDATE_CACHE.get("payload")
+        ttl = _UPDATE_CACHE.get("ttl", 0)
+        if payload is not None and not refresh and now - _UPDATE_CACHE["at"] < ttl:
+            return payload
+
+    latest = _query_latest_release()
+    if latest:
+        payload = {
+            "enabled": True,
+            "current": APP_VERSION,
+            "latest": latest["version"],
+            "update_available": _is_newer(latest["version"], APP_VERSION),
+            "release_url": latest["release_url"],
+            "download_url": latest["download_url"],
+            "notes": latest["notes"],
+            "source": latest["source"],
+            "error": None,
+            "checked_at": int(time.time()),
+        }
+        ttl = max(60, config.update_check_ttl_seconds)
+    else:
+        payload = {
+            "enabled": True,
+            "current": APP_VERSION,
+            "latest": None,
+            "update_available": False,
+            "release_url": "",
+            "download_url": "",
+            "notes": "",
+            "source": "",
+            "error": "检查更新失败（网络或 API 限流）",
+            "checked_at": int(time.time()),
+        }
+        ttl = 300
+
+    with _UPDATE_LOCK:
+        _UPDATE_CACHE.update(
+            {"at": time.time(), "ttl": ttl, "payload": payload}
+        )
+    return payload
+
+
 @app.get("/api/health")
 def health(response: Response):
     response.headers["Cache-Control"] = "no-store"
@@ -493,6 +653,7 @@ def health(response: Response):
         "modes": ["professional", "psychologist"],
         "memory_enabled": config.memory_enabled,
         "key_configured": bool(config.deepseek_api_key),
+        "version": APP_VERSION,
     }
 
 
