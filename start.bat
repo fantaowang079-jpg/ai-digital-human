@@ -12,7 +12,7 @@ if not exist "logs" mkdir "logs" >nul 2>&1
 
 set "PORT=8000"
 :findport
-netstat -ano | findstr /R /C:":%PORT% " | findstr /I "LISTENING" >nul 2>&1
+netstat -ano | findstr /R /C:":%PORT% " >nul 2>&1
 if errorlevel 1 goto portfound
 set /a PORT+=1
 if %PORT% GTR 8010 goto noport
@@ -25,17 +25,21 @@ start "AI Digital Human Server" "%~dp0run_server.bat"
 rem Wait until the server is actually listening before opening the browser
 set /a WAIT=0
 :waitready
-netstat -ano | findstr /R /C:":%PORT% " | findstr /I "LISTENING" >nul 2>&1
+netstat -ano | findstr /R /C:":%PORT% " >nul 2>&1
 if not errorlevel 1 goto ready
 set /a WAIT+=1
-if %WAIT% GEQ 30 goto slow
+if %WAIT% GEQ 120 goto slow
+if %WAIT% EQU 1 echo Waiting for server (first launch can take up to a minute)...
+<nul set /p ".="
 timeout /t 1 /nobreak >nul 2>&1
 goto waitready
 
 :slow
-echo Server is taking longer than 30 seconds. Check the server window for errors.
+echo.
+echo Server did not start within 120 seconds. Check the server window for errors.
 
 :ready
+echo.
 start "" "http://localhost:%PORT%"
 echo.
 echo ==========================================
