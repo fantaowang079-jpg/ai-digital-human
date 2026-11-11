@@ -235,6 +235,39 @@ def _query_latest_release() -> dict | None:
     except (requests.RequestException, ValueError, TypeError):
         logger.warning("Gitee 更新检查失败", exc_info=True)
 
+    # Gitee 还没有 Release 时，用公开的版本 tag 兜底，
+    # 这样即使 GitHub API 被限流也不会显示“检查失败”。
+    try:
+        resp = requests.get(
+            f"https://gitee.com/api/v5/repos/{config.update_check_gitee_repo}/tags",
+            headers=headers,
+            timeout=6,
+        )
+        if resp.ok:
+            tags = resp.json() or []
+            version_tags = [
+                tag.get("name", "")
+                for tag in tags
+                if _version_key(tag.get("name", "")) != (0,)
+            ]
+            if version_tags:
+                latest = max(version_tags, key=_version_key)
+                return {
+                    "version": latest,
+                    "release_url": (
+                        f"https://gitee.com/{config.update_check_gitee_repo}"
+                        f"/tree/{latest}"
+                    ),
+                    "download_url": (
+                        f"https://github.com/{config.update_check_github_repo}"
+                        f"/releases/download/{latest}/ai-digital-human-windows.zip"
+                    ),
+                    "notes": "",
+                    "source": "gitee-tag",
+                }
+    except (requests.RequestException, ValueError, TypeError):
+        logger.warning("Gitee tag 更新检查失败", exc_info=True)
+
     try:
         resp = requests.get(
             f"https://api.github.com/repos/{config.update_check_github_repo}/releases/latest",

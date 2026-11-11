@@ -40,6 +40,42 @@ def test_version_key_and_compare():
     assert not main._is_newer("voice-original", "1.0.3")
 
 
+class _FakeResponse:
+    def __init__(self, payload, ok=True, status_code=200):
+        self._payload = payload
+        self.ok = ok
+        self.status_code = status_code
+
+    def json(self):
+        return self._payload
+
+
+def test_query_latest_release_falls_back_to_gitee_tags(monkeypatch):
+    def fake_get(url, **kwargs):
+        if "/releases" in url:
+            return _FakeResponse([])
+        if "/tags" in url:
+            return _FakeResponse(
+                [
+                    {"name": "voice-original"},
+                    {"name": "v1.0.2"},
+                    {"name": "v1.0.4"},
+                ]
+            )
+        return _FakeResponse({}, ok=False, status_code=500)
+
+    monkeypatch.setattr(main.requests, "get", fake_get)
+
+    data = main._query_latest_release()
+
+    assert data is not None
+    assert data["version"] == "v1.0.4"
+    assert data["source"] == "gitee-tag"
+    assert data["download_url"].endswith(
+        "/v1.0.4/ai-digital-human-windows.zip"
+    )
+
+
 def test_update_reports_new_version(client, monkeypatch):
     monkeypatch.setattr(
         main, "_query_latest_release", lambda: _release("v99.0.0")
