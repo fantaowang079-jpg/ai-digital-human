@@ -225,7 +225,16 @@ def stt(req: STTRequest):
     if len(audio_bytes) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="音频过大，请缩短录音")
 
-    text = stt_provider.transcribe(audio_bytes)
+    try:
+        text = stt_provider.transcribe(audio_bytes)
+    except Exception:
+        # 模型未下载完、音频格式不支持、网络失败等都可能走到这里。
+        # 不要把异常吞成空文本，否则前端只会显示「没有听清」。
+        logger.exception("stt failed")
+        raise HTTPException(
+            status_code=502,
+            detail="语音识别失败，请查看 logs/app.log 或稍后重试",
+        )
     return {"text": text}
 
 

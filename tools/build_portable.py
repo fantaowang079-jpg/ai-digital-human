@@ -249,17 +249,22 @@ def main() -> None:
         print("[copy] 复用当前虚拟环境的依赖")
         skip_prefixes = (
             "~",          # pip 中断产生的临时目录
-            "pip",
+            "pip-",
             "pytest",
             "_pytest",
             "pluggy",
             "iniconfig",
             "pygments",
-            "httpx",
-            "httpcore",
         )
+        # 注意：不能跳过 httpx2/httpcore2/truststore/hf_xet，
+        # huggingface_hub 下载 Whisper 模型需要它们。
+        skip_exact = {"pip", "pygments", "pluggy", "iniconfig", "httpx", "httpcore"}
+        skip_prefixes_2 = ("httpx-", "httpcore-")
         for item in venv_site.iterdir():
-            if item.name.startswith(skip_prefixes):
+            name = item.name
+            if name.startswith(skip_prefixes) or name in skip_exact:
+                continue
+            if name.startswith(skip_prefixes_2):
                 continue
             target = site_packages / item.name
             if item.is_dir():
@@ -313,8 +318,11 @@ def main() -> None:
                 shutil.rmtree(path, ignore_errors=True)
             else:
                 path.unlink(missing_ok=True)
-    # 这些是可选加速/开发依赖，删掉不影响 HTTP 服务和模型下载
-    for name in ("hf_xet", "watchfiles", "websockets"):
+    # 这些是可选加速/开发依赖，删掉不影响 HTTP 服务；
+    # hf_xet 必须保留：huggingface_hub 模型下载依赖它。
+    # onnxruntime 只用于 Whisper 的 VAD 过滤，本项目 VAD 在前端，
+    # 且 transcribe 未开启 vad_filter，可以安全移除（已实测识别正常）。
+    for name in ("watchfiles", "websockets", "onnxruntime"):
         for path in site_packages.glob(f"{name}*"):
             if path.is_dir():
                 shutil.rmtree(path, ignore_errors=True)

@@ -20,9 +20,19 @@ class FasterWhisperSTTProvider(STTProvider):
     模型首次使用时从 HuggingFace 下载（国内走 hf-mirror 镜像加速）。
     """
 
-    def __init__(self, model_size: str = "base", device: str = "cpu"):
+    def __init__(
+        self,
+        model_size: str = "base",
+        device: str = "cpu",
+        language: str = "zh",
+        beam_size: int = 5,
+        initial_prompt: str = "",
+    ):
         self.model_size = model_size
         self.device = device
+        self.language = language or None
+        self.beam_size = max(1, beam_size)
+        self.initial_prompt = initial_prompt or None
         self._model = None  # 懒加载：首次识别时才下载并加载模型
 
     def _get_model(self):
@@ -42,7 +52,12 @@ class FasterWhisperSTTProvider(STTProvider):
             f.write(audio_bytes)
             tmp_path = f.name
         try:
-            segments, _ = self._get_model().transcribe(tmp_path, beam_size=1)
+            segments, _ = self._get_model().transcribe(
+                tmp_path,
+                beam_size=self.beam_size,
+                language=self.language,
+                initial_prompt=self.initial_prompt,
+            )
             return "".join(seg.text for seg in segments).strip()
         finally:
             os.unlink(tmp_path)
@@ -51,5 +66,10 @@ class FasterWhisperSTTProvider(STTProvider):
 def get_stt_provider(config: Config) -> STTProvider:
     """根据配置返回对应的 STT 实现。"""
     if config.stt_provider == "faster-whisper":
-        return FasterWhisperSTTProvider(config.stt_model_size)
+        return FasterWhisperSTTProvider(
+            config.stt_model_size,
+            language=config.stt_language,
+            beam_size=config.stt_beam_size,
+            initial_prompt=config.stt_initial_prompt,
+        )
     raise ValueError(f"未知的 STT provider: {config.stt_provider}")

@@ -23,27 +23,31 @@ import requests
 
 API = "https://gitee.com/api/v5"
 REPO = os.getenv("GITEE_REPO", "zjlhslyjsf0036/ai-digital-human")
-TAG = os.getenv("GITEE_TAG", "v1.0.1")
+TAG = os.getenv("GITEE_TAG", "v1.0.2")
 ROOT = Path(__file__).resolve().parents[1]
 FILES = [
     ROOT / "dist" / "ai-digital-human-windows.zip",
+    ROOT / "dist" / "voice-fix-v1.0.2.zip",
     ROOT / "dist" / "launcher-diagnose-fix-v1.0.1.zip",
 ]
 
-NOTES = """## AI 数字人 Windows 免安装版 v1.0.1
+NOTES = """## AI 数字人 Windows 免安装版 v1.0.2
 
 - 下载 `ai-digital-human-windows.zip`，解压后双击 **start.bat**（或 启动数字人.bat），
   不需要安装 Python。
 - 首次使用按页面提示填写自己的 DeepSeek API Key（只保存在本机 .env，不会上传）。
-- 已经下载 v1.0.0 的用户：下载 `launcher-diagnose-fix-v1.0.1.zip` 覆盖到原文件夹即可。
+- 已下载 v1.0.1 的用户：下载 `voice-fix-v1.0.2.zip` 覆盖到原文件夹即可。
+- 已下载 v1.0.0 的用户：先覆盖 `launcher-diagnose-fix-v1.0.1.zip`，再覆盖语音补丁。
 
-### 本次更新
+### 本次更新（语音修复）
 
-- 新增页面「使用指南」提示助手和 `使用指南.md`
-- 启动器增加完整解压自检、ASCII 入口 `start.bat`、端口自动选择
-- 新增 `diagnose.bat` 诊断日志和 `logs/app.log`
-- 新增 `BUGLOG.md` 问题记录与反馈模板
-- 精简包体，适配 Gitee 100MB 附件限制
+- 修复录音中点 ⏹ 会丢弃录音的问题，改为立即停止并发送识别
+- `/api/stt` 失败返回明确 502，前端显示真实错误，不再误报「没有听清」
+- STT 明确 `language=zh`、`beam_size=5`、中文领域提示词，提升「语音」等词识别
+- 便携包保留 `huggingface_hub` 必需的 `httpx2/httpcore2/truststore/hf_xet`，
+  修复一用语音就报模型加载错误的问题
+- 移除仅 VAD 用的 onnxruntime，包体约 84MB
+- 新增 STT 成功/失败/参数回归测试，pytest 63 条全过
 
 首次说话会下载 Faster-Whisper 模型（约 150MB），需要联网；DeepSeek 和 Edge-TTS
 需要联网，知识库与上下文记忆都在本地。包内不包含 API Key、私有文档或聊天记录。
@@ -67,7 +71,7 @@ def create_release(session: requests.Session, token: str) -> dict:
         params={"access_token": token},
         data={
             "tag_name": TAG,
-            "name": "AI 数字人 Windows 便携版 v1.0.1",
+            "name": "AI 数字人 Windows 便携版 v1.0.2",
             "body": NOTES,
             "target_commitish": "master",
         },

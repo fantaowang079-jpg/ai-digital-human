@@ -13,6 +13,11 @@ DEFAULT_PROFESSIONAL_PROMPT = (
     "5. 用简洁、口语化的中文回答；可以分点，控制在 6 句话以内。"
 )
 
+DEFAULT_STT_PROMPT = (
+    "以下是普通话的句子，请输出简体中文。"
+    "关键词：语音、数字人、知识库、专业模式、心理医生、功能检查。"
+)
+
 DEFAULT_PSYCHOLOGIST_PROMPT = (
     "你是「心语」，一位温暖、耐心的心理倾听者，当前处于「心理医生模式」。\n"
     "工作要求：\n"
@@ -40,6 +45,9 @@ class Config:
     # STT 配置
     stt_provider: str = "faster-whisper"
     stt_model_size: str = "base"        # tiny/base/small/medium/large
+    stt_language: str = "zh"            # 明确中文，避免输出繁体/误判语种
+    stt_beam_size: int = 5              # 比 beam_size=1 更准
+    stt_initial_prompt: str = DEFAULT_STT_PROMPT  # 用领域词提示，提升中文识别
 
     # 两种模式的人格设定（可用环境变量覆盖）
     professional_prompt: str = DEFAULT_PROFESSIONAL_PROMPT
@@ -94,6 +102,11 @@ def load_config() -> Config:
         tts_voice=os.getenv("TTS_VOICE", "zh-CN-XiaoxiaoNeural"),
         stt_provider=os.getenv("STT_PROVIDER", "faster-whisper"),
         stt_model_size=os.getenv("STT_MODEL_SIZE", "base"),
+        stt_language=os.getenv("STT_LANGUAGE", "zh"),
+        stt_beam_size=_env_int("STT_BEAM_SIZE", 5),
+        stt_initial_prompt=os.getenv(
+            "STT_INITIAL_PROMPT", DEFAULT_STT_PROMPT
+        ),
         professional_prompt=os.getenv("PROFESSIONAL_PROMPT")
         or DEFAULT_PROFESSIONAL_PROMPT,
         psychologist_prompt=os.getenv("PSYCHOLOGIST_PROMPT")

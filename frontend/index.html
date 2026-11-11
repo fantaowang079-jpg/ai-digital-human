@@ -476,7 +476,7 @@
     <div class="chat-box" id="chatBox"></div>
 
     <div class="input-row">
-      <button id="mic" title="语音输入">🎤</button>
+      <button id="mic" title="语音输入：点🎤开始，点⏹停止并发送">🎤</button>
       <input id="input" type="text" placeholder="打字或点🎤说话…" />
       <button id="send">发送</button>
     </div>
@@ -524,6 +524,12 @@
           展开「📚 知识库」面板，上传 txt / md / csv / pdf / docx；也可以把整个文件夹放进
           <code>knowledge/</code> 目录。上传后会自动重建索引，下一次提问立即生效。
           首次解析大量 PDF 可能需要几十秒，解析结果会缓存，之后重启很快。
+        </p>
+
+        <h4>🎤 语音输入</h4>
+        <p>
+          点 🎤 开始说话，停顿约 2 秒会自动发送；也可以再点 ⏹ <b>立即停止并发送</b>。
+          首次使用会下载语音识别模型（约 150MB），需要联网；请在浏览器允许麦克风权限。
         </p>
 
         <h4>📄 PDF 转文字 &amp; 🧠 上下文记忆</h4>
@@ -1408,6 +1414,16 @@
     // 开始聆听：申请麦克风 + 录音 + VAD 检测
     async function startListening() {
       if (isRecording) return;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        addBubble("当前浏览器/地址不支持麦克风。请用 Chrome/Edge 打开 http://localhost:8000（不要用局域网 IP）。", "assistant");
+        exitConversation();
+        return;
+      }
+      if (typeof MediaRecorder === "undefined") {
+        addBubble("当前浏览器不支持录音，请使用 Chrome 或 Edge。", "assistant");
+        exitConversation();
+        return;
+      }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
@@ -1436,7 +1452,15 @@
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ audio_base64: base64 }),
             });
-            const d = await r.json();
+            let d = {};
+            try {
+              d = await r.json();
+            } catch (e) {
+              d = {};
+            }
+            if (!r.ok) {
+              throw new Error(d.detail || ("HTTP " + r.status));
+            }
             if (d.text) {
               input.value = d.text;
               await send();
@@ -1445,7 +1469,7 @@
               relistenOrIdle();
             }
           } catch (e) {
-            addBubble("语音识别出错：" + e.message, "assistant");
+            addBubble("语音识别失败：" + (e.message || "请稍后重试"), "assistant");
             relistenOrIdle();
           }
         };
@@ -1454,7 +1478,7 @@
         isRecording = true;
         micBtn.textContent = "⏹";
         micBtn.classList.add("recording");
-        setStatus("thinking", "正在聆听，说完自动识别…");
+        setStatus("thinking", "正在聆听，停顿 2 秒自动发送；点 ⏹ 立即发送");
         startVAD();
       } catch (e) {
         addBubble("无法访问麦克风：" + e.message, "assistant");
@@ -1494,9 +1518,17 @@
       }
     }
 
-    // 语音输入开关：点🎤进入对话模式，再点退出
+    // 语音输入开关：点🎤进入对话模式；录音中点⏹停止并发送
     async function toggleRecording() {
       if (conversationMode) {
+        if (isRecording) {
+          // 手动停止时把当前录音送去识别，而不是丢弃
+          conversationMode = false;
+          micBtn.textContent = "🎤";
+          micBtn.classList.remove("recording");
+          stopRecordingNow();
+          return;
+        }
         exitConversation();
         return;
       }
