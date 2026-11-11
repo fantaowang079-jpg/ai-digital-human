@@ -60,6 +60,45 @@
       letter-spacing: .02em;
       margin-bottom: 6px;
     }
+    .setup-banner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--card);
+      border: 1px solid #3a3f63;
+      border-radius: 14px;
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .setup-banner[hidden] { display: none; }
+    .setup-banner > span { flex: 1; }
+    .setup-banner-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .setup-banner-actions button {
+      padding: 7px 10px;
+      font-size: 12px;
+      border-radius: 9px;
+    }
+    .mic-meter {
+      height: 4px;
+      width: 70%;
+      margin: 8px auto 0;
+      background: #2a2f55;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .mic-meter[hidden] { display: none; }
+    .mic-meter-bar {
+      height: 100%;
+      width: 0%;
+      background: #4ade80;
+      transition: width .08s linear;
+    }
     .avatar-card {
       background: var(--card);
       border-radius: 20px;
@@ -411,9 +450,19 @@
       <button class="mode-btn" data-mode="psychologist">💬 心理医生 · 心语</button>
     </div>
 
+    <!-- 非阻塞的首次配置提示：先体验 Mock 也能正常用语音 -->
+    <div class="setup-banner" id="setupBanner" hidden>
+      <span>首次使用：配置 DeepSeek API Key 才能使用真实 AI；也可以先体验 Mock 模式，语音功能不受影响。</span>
+      <div class="setup-banner-actions">
+        <button id="setupBannerOpen">去配置</button>
+        <button id="setupBannerSkip" class="ghost">先体验</button>
+      </div>
+    </div>
+
     <div class="avatar-card">
       <div class="persona-name" id="personaName">知语 · 知识库助手</div>
       <div class="status" id="status"><span class="dot"></span>待机中</div>
+      <div class="mic-meter" id="micMeter" hidden><div class="mic-meter-bar" id="micMeterBar"></div></div>
       <!-- 数字人 SVG 形象：眼睛会眨眼，嘴巴随语音音量开合 -->
       <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
         <path d="M60 82 Q100 20 140 82 Q142 60 130 52 Q110 26 100 26 Q90 26 70 52 Q58 60 60 82 Z" fill="#3a3f63" />
@@ -509,7 +558,7 @@
           <li>把整个便携包 <b>完整解压</b> 到桌面或文档目录，不要直接在 zip 预览里双击。</li>
           <li>双击 <b>start.bat</b>（或 启动数字人.bat）。</li>
           <li>浏览器自动打开；如果没打开，按黑窗口显示的地址访问（通常是 http://localhost:8000）。</li>
-          <li>首次使用按提示粘贴自己的 DeepSeek API Key，或点「先试用 Mock 模式」。</li>
+          <li>首次使用按提示粘贴自己的 DeepSeek API Key；没有 Key 点「先体验」即可，语音功能仍然可用（只是回复为 Mock 内容）。</li>
           <li>关闭黑色服务器窗口即停止服务。</li>
         </ol>
 
@@ -529,7 +578,10 @@
         <h4>🎤 语音输入</h4>
         <p>
           点 🎤 开始说话，停顿约 2 秒会自动发送；也可以再点 ⏹ <b>立即停止并发送</b>。
+          说话时头像下方会出现<b>麦克风电平条</b>：条不动说明浏览器没收到声音
+          （检查麦克风权限/输入设备）；条在动但没识别，请查看 <code>logs\app.log</code>。
           首次使用会下载语音识别模型（约 150MB），需要联网；请在浏览器允许麦克风权限。
+          如果页面顶部出现「配置 API Key」提示条，点「先体验」即可，不影响语音。
         </p>
 
         <h4>📄 PDF 转文字 &amp; 🧠 上下文记忆</h4>
@@ -622,7 +674,10 @@
     const setupModal = document.getElementById("setupModal");
     const setupKey = document.getElementById("setupKey");
     const setupHint = document.getElementById("setupHint");
+    const setupBanner = document.getElementById("setupBanner");
     const guideModal = document.getElementById("guideModal");
+    const micMeter = document.getElementById("micMeter");
+    const micMeterBar = document.getElementById("micMeterBar");
 
     // 浏览器本地会话 ID：同一个浏览器刷新/重启后仍然使用同一份长期记忆
     function getSessionId() {
@@ -1103,6 +1158,7 @@
 
     // ---------------- 首次配置 API Key ----------------
     function openSetup() {
+      setupBanner.hidden = true;
       setupHint.innerHTML =
         '没有 Key？<a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">去 DeepSeek 开放平台获取</a>';
       setupModal.hidden = false;
@@ -1126,6 +1182,7 @@
         if (!r.ok) throw new Error(d.detail || ("HTTP " + r.status));
         localStorage.setItem("dh_setup_skipped", "0");
         setupModal.hidden = true;
+        setupBanner.hidden = true;
         setupKey.value = "";
         await loadHealth();
         addBubble("API Key 已保存，现在可以使用真实 AI 回复了。", "assistant");
@@ -1140,7 +1197,9 @@
         if (!r.ok) return;   // 老版本后端不弹窗
         const d = await r.json();
         if (!d.key_configured && localStorage.getItem("dh_setup_skipped") !== "1") {
-          openSetup();
+          setupBanner.hidden = false;
+        } else {
+          setupBanner.hidden = true;
         }
       } catch (e) {
         // 后端未连接时保持安静，页面其它部分会提示
@@ -1148,9 +1207,15 @@
     }
 
     document.getElementById("setupOpen").addEventListener("click", openSetup);
+    document.getElementById("setupBannerOpen").addEventListener("click", openSetup);
+    document.getElementById("setupBannerSkip").addEventListener("click", () => {
+      localStorage.setItem("dh_setup_skipped", "1");
+      setupBanner.hidden = true;
+    });
     document.getElementById("setupSave").addEventListener("click", saveSetupKey);
     document.getElementById("setupSkip").addEventListener("click", () => {
       localStorage.setItem("dh_setup_skipped", "1");
+      setupBanner.hidden = true;
       setupModal.hidden = true;
     });
     setupKey.addEventListener("keydown", e => {
@@ -1365,6 +1430,8 @@
     function stopRecordingNow() {
       if (!isRecording) return;
       isRecording = false;
+      micMeter.hidden = true;
+      micMeterBar.style.width = "0%";
       if (vadRafId) cancelAnimationFrame(vadRafId);
       if (vadCtx) vadCtx.close().catch(() => {});
       mediaRecorder.stop();
@@ -1390,6 +1457,9 @@
           sum += v * v;
         }
         const rms = Math.sqrt(sum / data.length);
+        const level = Math.min(1, rms / 0.08);
+        micMeterBar.style.width = (level * 100).toFixed(1) + "%";
+        micMeterBar.style.background = rms > VAD_THRESHOLD ? "#4ade80" : "#fbbf24";
 
         if (rms > VAD_THRESHOLD) {
           hasSpoken = true;
@@ -1429,6 +1499,10 @@
 
         // 用独立的 AudioContext 做音量分析（VAD），不干扰播放用的 audioCtx
         vadCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // 某些浏览器会把新建的 AudioContext 挂起，导致分析器一直读到静音
+        if (vadCtx.state === "suspended") {
+          try { await vadCtx.resume(); } catch (e) { /* 忽略 */ }
+        }
         const vadSrc = vadCtx.createMediaStreamSource(stream);
         vadAnalyser = vadCtx.createAnalyser();
         vadAnalyser.fftSize = 512;
@@ -1478,9 +1552,13 @@
         isRecording = true;
         micBtn.textContent = "⏹";
         micBtn.classList.add("recording");
+        micMeter.hidden = false;
+        micMeterBar.style.width = "0%";
         setStatus("thinking", "正在聆听，停顿 2 秒自动发送；点 ⏹ 立即发送");
         startVAD();
       } catch (e) {
+        micMeter.hidden = true;
+        micMeterBar.style.width = "0%";
         addBubble("无法访问麦克风：" + e.message, "assistant");
         exitConversation();
       }
@@ -1502,6 +1580,8 @@
       micBtn.textContent = "🎤";
       micBtn.classList.remove("recording");
       setStatus("", "待机中");
+      micMeter.hidden = true;
+      micMeterBar.style.width = "0%";
       if (isRecording) {
         discardOnStop = true;
         stopRecordingNow();
