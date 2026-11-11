@@ -3,7 +3,7 @@
 > 一个从零实现的精简 AI 数字人：**听 → 想 → 说 → 动** 全链路可运行。编排层与前端为自研实现，底层调用 DeepSeek（LLM）、Edge-TTS（语音合成）与 Faster-Whisper（语音识别），可插拔架构，不依赖高端 GPU。
 >
 > 📦 **Windows 用户**：可以直接下载[免安装便携版](https://github.com/fantaowang079-jpg/ai-digital-human/releases/latest)，解压后双击 `start.bat`（或 `启动数字人.bat`）即可，不需要安装 Python。
-> Gitee 用户也可以从 [Gitee 发行版](https://gitee.com/zjlhslyjsf0036/ai-digital-human/releases) 下载附件。
+> Gitee 仓库已同步；**Gitee Release 附件需要维护者用自己的 Gitee Token 上传后才会出现**（见 [GITEE_RELEASE.md](GITEE_RELEASE.md)）。如果 Gitee 发行版页面还没有附件，请先用 GitHub Release。
 >
 > 📖 **不会用？** 看[使用指南](使用指南.md)；遇到问题看 [BUGLOG.md](BUGLOG.md)。
 > 维护者上传 Gitee Release 见 [GITEE_RELEASE.md](GITEE_RELEASE.md)。
