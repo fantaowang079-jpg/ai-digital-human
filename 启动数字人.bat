@@ -36,6 +36,8 @@ echo      pip install -r requirements.txt
 echo      copy .env.example .env
 echo      Then run this file again.
 echo.
+echo Opening SOLUTION.txt with download links and setup steps...
+start "" "%~dp0SOLUTION.txt"
 pause
 exit /b 1
 
@@ -44,5 +46,7 @@ echo.
 echo ERROR: backend\main.py was not found.
 echo Please extract the WHOLE zip and run this file from the project root.
 echo.
+echo Opening SOLUTION.txt with download links and setup steps...
+start "" "%~dp0SOLUTION.txt"
 pause
 exit /b 1

@@ -9,6 +9,8 @@
 > 维护者上传 Gitee Release 见 [GITEE_RELEASE.md](GITEE_RELEASE.md)。
 >
 > ⚠️ **如果你下载的是源码 ZIP（文件夹名类似 `ai-digital-human-master`）**：它**不包含 Python 环境和依赖**，不能直接双击启动。只想一键运行请下载 Release 里的 `ai-digital-human-windows.zip`（解压后双击 `start.bat`）；想从源码运行请按下方「快速开始」安装依赖。
+>
+> 🧭 **启动失败/提示找不到路径**：看 [SOLUTION.txt](SOLUTION.txt)（源码启动脚本报错时会自动打开它），里面包含下载地址、源码安装步骤和「搜不到大模型」的说明。
 
 前端展示一个 2D 数字人形象，支持**文字或语音**输入：后端调用大模型**流式**生成回复，按句合成语音并逐句返回，网页端边接收边播放，用音频实时驱动数字人的「嘴巴」做口型动画。
 

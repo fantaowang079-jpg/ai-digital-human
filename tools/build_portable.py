@@ -79,6 +79,8 @@ if not exist "run_server.bat" echo   MISSING: run_server.bat
 if not exist "frontend\index.html" echo   MISSING: frontend\index.html
 echo.
 echo Run diagnose.bat and send the logs folder to the developer.
+echo Opening SOLUTION.txt with download links and setup steps...
+start "" "%~dp0SOLUTION.txt"
 pause
 exit /b 1
 
@@ -86,6 +88,8 @@ exit /b 1
 echo.
 echo ERROR: Ports 8000-8010 are all in use.
 echo Close other programs and try again.
+echo Opening SOLUTION.txt with download links and setup steps...
+start "" "%~dp0SOLUTION.txt"
 pause
 exit /b 1
 """
@@ -180,6 +184,10 @@ INSTRUCTIONS = """AI 数字人 Windows 便携版
 - logs\\diagnose.txt：环境/文件/端口诊断
 - logs\\app.log：应用错误日志
 - 反馈问题时请附上 logs 文件夹，但不要发送 .env（里面有 Key）。
+
+【下载与更多帮助】
+- Gitee 发行版：https://gitee.com/zjlhslyjsf0036/ai-digital-human/releases
+- 详细解决方案：同目录 SOLUTION.txt / 使用指南.md / BUGLOG.md
 """
 
 
@@ -323,6 +331,7 @@ def main() -> None:
         "LICENSE",
         "BUGLOG.md",
         "使用指南.md",
+        "SOLUTION.txt",
     ):
         source = ROOT / name
         if source.exists():
