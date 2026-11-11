@@ -4,127 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI 数字人 · 对话演示</title>
-  <style>
-    :root {
-      --bg: #0f1226;
-      --card: #1a1e3a;
-      --accent: #6c8cff;
-      --text: #e8eaf6;
-      --muted: #9aa0c3;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-      background: radial-gradient(circle at 50% 0%, #232a55 0%, var(--bg) 60%);
-      color: var(--text);
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-    }
-    .app {
-      width: 100%;
-      max-width: 420px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-    .avatar-card {
-      background: var(--card);
-      border-radius: 20px;
-      padding: 24px 20px 16px;
-      text-align: center;
-      box-shadow: 0 10px 40px rgba(0,0,0,.4);
-    }
-    .status {
-      display: inline-block;
-      font-size: 13px;
-      color: var(--muted);
-      margin-bottom: 8px;
-    }
-    .status .dot {
-      display: inline-block;
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: #4ade80;
-      margin-right: 6px;
-      animation: pulse 1.5s infinite;
-    }
-    .status.speaking .dot { background: #fbbf24; }
-    .status.thinking .dot { background: #f87171; }
-    @keyframes pulse { 50% { opacity: .4; } }
-
-    svg { width: 180px; height: 180px; }
-
-    .chat-box {
-      background: var(--card);
-      border-radius: 20px;
-      padding: 14px;
-      height: 260px;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      box-shadow: 0 10px 40px rgba(0,0,0,.4);
-    }
-    .bubble {
-      max-width: 80%;
-      padding: 10px 14px;
-      border-radius: 14px;
-      font-size: 14px;
-      line-height: 1.5;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    .bubble.user {
-      align-self: flex-end;
-      background: var(--accent);
-      color: #fff;
-      border-bottom-right-radius: 4px;
-    }
-    .bubble.assistant {
-      align-self: flex-start;
-      background: #2a2f55;
-      border-bottom-left-radius: 4px;
-    }
-    .input-row {
-      display: flex;
-      gap: 10px;
-    }
-    input {
-      flex: 1;
-      padding: 13px 16px;
-      border: none;
-      border-radius: 14px;
-      background: var(--card);
-      color: var(--text);
-      font-size: 14px;
-      outline: none;
-    }
-    input::placeholder { color: var(--muted); }
-    button {
-      padding: 13px 18px;
-      border: none;
-      border-radius: 14px;
-      background: var(--accent);
-      color: #fff;
-      font-size: 14px;
-      cursor: pointer;
-      transition: opacity .15s;
-    }
-    button:hover { opacity: .85; }
-    button:disabled { opacity: .5; cursor: not-allowed; }
-    button#mic { background: #3a3f63; font-size: 16px; }
-    button#mic.recording { background: #f87171; }
-  </style>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="app">
     <div class="avatar-card">
       <div class="status" id="status"><span class="dot"></span>待机中</div>
       <!-- 数字人 SVG 形象：眼睛会眨眼，嘴巴随语音音量开合 -->
-      <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+      <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <path d="M60 82 Q100 20 140 82 Q142 60 130 52 Q110 26 100 26 Q90 26 70 52 Q58 60 60 82 Z" fill="#3a3f63" />
         <circle cx="100" cy="105" r="58" fill="#ffe0c7" />
         <circle cx="42" cy="108" r="9" fill="#ffe0c7" />
@@ -140,7 +27,43 @@
       <div class="status" id="provider" style="margin-top:6px;"></div>
     </div>
 
-    <div class="chat-box" id="chatBox"></div>
+    <div class="chat-box" id="chatBox" aria-live="polite"></div>
+
+    <!-- 语音面板：紧贴对话框下方，实时显示音量、判定倒计时与语音检测状态 -->
+    <section class="voice-panel" id="voicePanel" data-state="idle" aria-label="语音输入检测">
+      <div class="vp-head">
+        <span class="vp-status">
+          <span class="vp-dot"></span>
+          <span id="vpStatusText">语音输入未开启</span>
+        </span>
+        <span class="vp-timer" id="vpTimer">2.0s</span>
+      </div>
+
+      <div class="vp-meter">
+        <span class="vp-label">音量</span>
+        <div class="vp-track" id="vpLevelTrack">
+          <div class="vp-fill" id="vpLevelFill"></div>
+          <div class="vp-peak" id="vpLevelPeak"></div>
+          <div class="vp-threshold" id="vpThreshold"><span>阈值</span></div>
+        </div>
+      </div>
+
+      <div class="vp-meter">
+        <span class="vp-label">判定</span>
+        <div class="vp-track vp-track-countdown">
+          <div class="vp-fill vp-countdown" id="vpCountdownFill"></div>
+        </div>
+      </div>
+
+      <div class="vp-foot">
+        <span id="vpHint">点 🎤 开始说话</span>
+        <label class="vp-slider">
+          停顿
+          <input type="range" id="vpSilenceSlider" min="1000" max="4000" step="100" value="2000" />
+          <span id="vpSilenceValue">2.0s</span>
+        </label>
+      </div>
+    </section>
 
     <div class="input-row">
       <button id="mic" title="语音输入">🎤</button>
@@ -149,388 +72,7 @@
     </div>
   </div>
 
-  <script>
-    const chatBox = document.getElementById("chatBox");
-    const input = document.getElementById("input");
-    const sendBtn = document.getElementById("send");
-    const micBtn = document.getElementById("mic");
-    const statusEl = document.getElementById("status");
-    const providerEl = document.getElementById("provider");
-    const mouth = document.getElementById("mouth");
-    const eyeL = document.getElementById("eyeL");
-    const eyeR = document.getElementById("eyeR");
-
-    let messages = [];
-    let audioCtx = null;
-    let analyser = null;
-    let rafId = null;
-
-    // 音频播放队列：流式逐句到达，按顺序串行播放
-    let audioQueue = [];
-    let isPlaying = false;
-
-    // 语音活动检测（VAD）参数
-    const VAD_THRESHOLD = 0.02;   // 音量阈值（RMS）
-    const SILENCE_STOP = 2000;    // 停顿 2 秒判定说完
-    const MAX_RECORD = 15000;     // 最长录音 15 秒（兜底）
-
-    // 对话模式：回复结束后自动重新聆听，可连续语音聊天
-    let conversationMode = false;
-    let isStreaming = false;      // 是否正在流式接收回复
-    let discardOnStop = false;    // 退出对话时停止录音并跳过识别
-
-    // 录音 + VAD 相关状态
-    let mediaRecorder = null;
-    let audioChunks = [];
-    let isRecording = false;
-    let vadCtx = null;
-    let vadAnalyser = null;
-    let vadRafId = null;
-    let hasSpoken = false;
-    let silenceAccum = 0;
-    let recordStartTime = 0;
-
-    (async () => {
-      try {
-        const r = await fetch("/api/health");
-        const d = await r.json();
-        providerEl.textContent = `LLM: ${d.llm_provider} · TTS: ${d.tts_provider} · STT: ${d.stt_provider}`;
-      } catch (e) {
-        providerEl.textContent = "后端未连接";
-      }
-    })();
-
-    function addBubble(text, role) {
-      const div = document.createElement("div");
-      div.className = "bubble " + role;
-      div.textContent = text;
-      chatBox.appendChild(div);
-      chatBox.scrollTop = chatBox.scrollHeight;
-      return div;
-    }
-
-    function setStatus(mode, text) {
-      statusEl.className = "status " + mode;
-      statusEl.innerHTML = '<span class="dot"></span>' + text;
-    }
-
-    // 播放一段 base64 音频，返回 Promise（音频播完 resolve）
-    function playAudio(base64) {
-      const bin = atob(base64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256;
-      }
-      return audioCtx.resume().then(() => audioCtx.decodeAudioData(bytes.buffer)).then(buffer => {
-        return new Promise(resolve => {
-          const source = audioCtx.createBufferSource();
-          source.buffer = buffer;
-          source.connect(analyser);
-          analyser.connect(audioCtx.destination);
-          source.start();
-          animateMouth();
-          source.onended = () => {
-            cancelAnimationFrame(rafId);
-            mouth.setAttribute("ry", 4);
-            resolve();
-          };
-        });
-      });
-    }
-
-    function enqueueAudio(b64) {
-      if (!b64) return;
-      audioQueue.push(b64);
-      if (!isPlaying) playNextInQueue().catch(e => console.warn("playback failed", e));
-    }
-
-    async function playNextInQueue() {
-      isPlaying = true;
-      try {
-        while (audioQueue.length > 0) {
-          const b64 = audioQueue.shift();
-          setStatus("speaking", "正在说话…");
-          // 单句解码/播放失败不能让整个队列卡死
-          try {
-            await playAudio(b64);
-          } catch (e) {
-            console.warn("audio sentence failed", e);
-          }
-        }
-      } finally {
-        isPlaying = false;
-        maybeRestartListening();
-      }
-    }
-
-    function animateMouth() {
-      const data = new Uint8Array(analyser.fftSize);
-      analyser.getByteTimeDomainData(data);
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) {
-        const v = (data[i] - 128) / 128;
-        sum += v * v;
-      }
-      const rms = Math.sqrt(sum / data.length);
-      const open = Math.min(1, rms * 5);
-      const ry = 2 + open * 12;
-      mouth.setAttribute("ry", ry);
-      mouth.setAttribute("cy", 128 + ry * 0.4);
-      rafId = requestAnimationFrame(animateMouth);
-    }
-
-    function blink() {
-      [eyeL, eyeR].forEach(e => e.setAttribute("ry", 1));
-      setTimeout(() => [eyeL, eyeR].forEach(e => e.setAttribute("ry", 7)), 120);
-    }
-    setInterval(blink, 3000);
-
-    // 流式发送：逐句接收后端返回，边显示文字边入队播放音频
-    async function send() {
-      if (isStreaming) return;   // 防止 Enter / 连点造成两条并发流
-      const text = input.value.trim();
-      if (!text) return;
-
-      // 对话模式正在录音时改用打字：先停止并丢弃录音，避免把助手语音当成用户输入
-      if (isRecording) {
-        discardOnStop = true;
-        stopRecordingNow();
-      }
-
-      input.value = "";
-      addBubble(text, "user");
-      messages.push({ role: "user", content: text });
-
-      sendBtn.disabled = true;
-      input.disabled = true;
-      if (!conversationMode) micBtn.disabled = true;
-      isStreaming = true;
-      setStatus("thinking", "正在思考…");
-
-      const bubble = addBubble("", "assistant");
-      let fullText = "";
-      let failed = false;
-
-      try {
-        const resp = await fetch("/api/chat/stream", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages }),
-        });
-        if (!resp.ok) throw new Error(await resp.text());
-        if (!resp.body) throw new Error("流式响应为空");
-
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop();
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            const chunk = JSON.parse(line);
-            if (chunk.type === "error") {
-              throw new Error(chunk.message || "生成失败，请稍后重试");
-            }
-            if (chunk.type && chunk.type !== "sentence") continue;
-            fullText += chunk.text || "";
-            bubble.textContent = fullText;
-            chatBox.scrollTop = chatBox.scrollHeight;
-            enqueueAudio(chunk.audio_base64);
-          }
-        }
-        if (!fullText.trim()) throw new Error("没有收到回复");
-        messages.push({ role: "assistant", content: fullText });
-      } catch (e) {
-        failed = true;
-        // 本轮失败：撤回刚加入的用户消息，避免下一轮把失败的问题重复发送
-        const last = messages[messages.length - 1];
-        if (last && last.role === "user" && last.content === text) messages.pop();
-        input.value = text;            // 还原输入，方便直接重试
-        audioQueue.length = 0;         // 丢弃尚未播放的后续音频
-        bubble.textContent = fullText
-          ? fullText + "【生成中断】" + (e.message || "请稍后重试")
-          : "出错了：" + (e.message || "请稍后重试");
-        setStatus("", "待机中");
-      } finally {
-        sendBtn.disabled = false;
-        input.disabled = false;
-        if (!conversationMode) micBtn.disabled = false;
-        isStreaming = false;
-        if (!failed) maybeRestartListening();
-      }
-    }
-
-    function blobToBase64(blob) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result.split(",")[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-    }
-
-    // 停止录音（手动点击 或 VAD 自动触发），随后走 onstop 识别流程
-    function stopRecordingNow() {
-      if (!isRecording) return;
-      isRecording = false;
-      if (vadRafId) cancelAnimationFrame(vadRafId);
-      if (vadCtx) vadCtx.close().catch(() => {});
-      mediaRecorder.stop();
-    }
-
-    // VAD：实时检测音量，「说话后停顿」则自动停止
-    function startVAD() {
-      const data = new Uint8Array(vadAnalyser.fftSize);
-      hasSpoken = false;
-      silenceAccum = 0;
-      recordStartTime = performance.now();
-      let lastTime = performance.now();
-
-      function tick(now) {
-        if (!isRecording) return;
-        const dt = now - lastTime;
-        lastTime = now;
-
-        vadAnalyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) {
-          const v = (data[i] - 128) / 128;
-          sum += v * v;
-        }
-        const rms = Math.sqrt(sum / data.length);
-
-        if (rms > VAD_THRESHOLD) {
-          hasSpoken = true;
-          silenceAccum = 0;
-        } else if (hasSpoken) {
-          silenceAccum += dt;
-          if (silenceAccum >= SILENCE_STOP) {
-            stopRecordingNow();
-            return;
-          }
-        }
-        // 超时兜底
-        if (now - recordStartTime > MAX_RECORD && hasSpoken) {
-          stopRecordingNow();
-          return;
-        }
-        vadRafId = requestAnimationFrame(tick);
-      }
-      vadRafId = requestAnimationFrame(tick);
-    }
-
-    // 开始聆听：申请麦克风 + 录音 + VAD 检测
-    async function startListening() {
-      if (isRecording) return;
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-        // 用独立的 AudioContext 做音量分析（VAD），不干扰播放用的 audioCtx
-        vadCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const vadSrc = vadCtx.createMediaStreamSource(stream);
-        vadAnalyser = vadCtx.createAnalyser();
-        vadAnalyser.fftSize = 512;
-        vadSrc.connect(vadAnalyser);
-
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
-        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-        mediaRecorder.onstop = async () => {
-          stream.getTracks().forEach(t => t.stop());
-          if (discardOnStop) {           // 用户主动退出，跳过识别
-            discardOnStop = false;
-            return;
-          }
-          const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
-          const base64 = await blobToBase64(blob);
-          setStatus("thinking", "正在识别…");
-          try {
-            const r = await fetch("/api/stt", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ audio_base64: base64 }),
-            });
-            const d = await r.json();
-            if (d.text) {
-              input.value = d.text;
-              await send();
-            } else {
-              addBubble("（没有听清，请再说一遍）", "assistant");
-              relistenOrIdle();
-            }
-          } catch (e) {
-            addBubble("语音识别出错：" + e.message, "assistant");
-            relistenOrIdle();
-          }
-        };
-
-        mediaRecorder.start();
-        isRecording = true;
-        micBtn.textContent = "⏹";
-        micBtn.classList.add("recording");
-        setStatus("thinking", "正在聆听，说完自动识别…");
-        startVAD();
-      } catch (e) {
-        addBubble("无法访问麦克风：" + e.message, "assistant");
-        exitConversation();
-      }
-    }
-
-    // 识别失败/没听清：对话模式下重新聆听，否则回到待机
-    function relistenOrIdle() {
-      if (conversationMode) {
-        setStatus("thinking", "请再说一遍…");
-        startListening();
-      } else {
-        setStatus("", "待机中");
-      }
-    }
-
-    // 退出对话模式
-    function exitConversation() {
-      conversationMode = false;
-      micBtn.textContent = "🎤";
-      micBtn.classList.remove("recording");
-      setStatus("", "待机中");
-      if (isRecording) {
-        discardOnStop = true;
-        stopRecordingNow();
-      }
-    }
-
-    // 回复播放结束后，若仍处对话模式则自动重新聆听（连续聊天）
-    function maybeRestartListening() {
-      if (conversationMode && !isRecording && !isStreaming && !isPlaying && audioQueue.length === 0) {
-        setStatus("thinking", "请继续说话…");
-        startListening();
-      } else if (!conversationMode && !isPlaying && audioQueue.length === 0) {
-        setStatus("", "待机中");
-      }
-    }
-
-    // 语音输入开关：点🎤进入对话模式，再点退出
-    async function toggleRecording() {
-      if (conversationMode) {
-        exitConversation();
-        return;
-      }
-      conversationMode = true;
-      micBtn.textContent = "⏹";
-      micBtn.classList.add("recording");
-      await startListening();
-    }
-
-    sendBtn.addEventListener("click", send);
-    input.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
-    micBtn.addEventListener("click", toggleRecording);
-  </script>
+  <script src="voice-panel.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

@@ -10,15 +10,17 @@
 
 1. **可插拔 Provider 架构**：LLM / TTS / STT 各自抽象成接口，DeepSeek / Edge-TTS / Faster-Whisper 可自由切换，改 `.env` 即可，上层编排零改动。
 2. **语音对话**：麦克风录音 → 本地 Faster-Whisper 识别 → 数字人语音回复，真正的「语音数字人」。
-3. **流式低延迟**：LLM 边生成、边分句、边 TTS，逐句返回，首句即播，显著降低首字延迟。
-4. **无 GPU 依赖**：LLM、TTS 走 API，口型用 Web Audio 实时驱动，普通电脑即可运行。
-5. **多轮对话**：前端维护对话历史，后端统一注入数字人角色设定（system prompt）。
+3. **语音输入面板**：对话框下方实时显示**音量电平条**（带 VAD 阈值刻度）与**判定时间条**——停止说话后倒计时开始缩短，走完自动识别并发送；停顿时长可在 1–4 秒之间调节。
+4. **打断（barge-in）**：数字人说话时持续监听人声，你开口并持续约 0.3 秒，就会立即停止播报、中断生成并转入聆听；用更高的阈值 + 回声抑制避免被自己的声音打断。
+5. **流式低延迟**：LLM 边生成、边分句、边 TTS，逐句返回，首句即播，显著降低首字延迟。
+6. **无 GPU 依赖**：LLM、TTS 走 API，口型用 Web Audio 实时驱动，普通电脑即可运行。
+7. **多轮对话**：前端维护对话历史，后端统一注入数字人角色设定（system prompt）。
 
 ## 🏗️ 架构
 
 ```
-浏览器前端 (SVG 数字人 + 口型动画 + 麦克风录音)
-        │  HTTP /api/chat/stream · /api/stt
+浏览器前端 (SVG 数字人 + 口型动画 + 语音输入面板)
+        │  HTTP /api/chat/stream · /api/stt · /api/voice/config
         ▼
 FastAPI 后端 (main.py)
         │
@@ -74,7 +76,8 @@ pytest -q
 ```
 
 测试用 fake pipeline 覆盖流式协议：正常逐句事件、生成中途异常必须变成 `error` 事件、
-请求体角色/长度校验、STT 非法音频返回 4xx。
+请求体角色/长度校验、STT 非法音频返回 4xx / 上游失败返回 502、中文识别参数确实传给
+faster-whisper，以及语音面板参数接口的默认值与可调范围。
 
 ## 📁 目录结构
 
@@ -89,8 +92,11 @@ digital-human/
 │       ├── tts.py          #   EdgeTTSProvider
 │       └── stt.py          #   FasterWhisperSTTProvider
 ├── frontend/
-│   └── index.html          # 数字人形象 + 口型动画 + 对话界面
-├── tests/                  # 流式协议与请求校验回归测试
+│   ├── index.html          # 页面结构：数字人 + 对话框 + 语音面板
+│   ├── styles.css          # 样式
+│   ├── voice-panel.js      # 语音面板：麦克风 / 音量条 / 判定时间条
+│   └── app.js              # 对话、流式回复、音频播放与口型
+├── tests/                  # 流式协议、STT 与语音面板参数回归测试
 ├── requirements.txt
 └── .env.example
 ```
@@ -99,6 +105,8 @@ digital-human/
 
 - [x] 文字对话 + TTS 语音 + 口型动画
 - [x] 语音输入（STT）：麦克风说话 → 数字人回应
+- [x] 语音输入面板：音量条 + 判定时间条（可调停顿 1–4 秒）
+- [x] 打断（barge-in）：数字人说话时检测到人声立即停止播报
 - [x] 流式输出：LLM 流式生成 + 分句 TTS，降低首字延迟
 - [ ] 声音克隆 / 更多音色
 - [ ] 3D 形象（Live2D / 3D 模型）替代 2D SVG

@@ -1,0 +1,290 @@
+:root {
+  --bg: #0f1226;
+  --card: #1a1e3a;
+  --accent: #6c8cff;
+  --text: #e8eaf6;
+  --muted: #9aa0c3;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --bad: #f87171;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  background: radial-gradient(circle at 50% 0%, #232a55 0%, var(--bg) 60%);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.app {
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ---- 数字人卡片 ---- */
+
+.avatar-card {
+  background: var(--card);
+  border-radius: 20px;
+  padding: 20px 20px 14px;
+  text-align: center;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .4);
+}
+
+.status {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.status .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  margin-right: 6px;
+  animation: pulse 1.5s infinite;
+}
+.status.speaking .dot { background: var(--warn); }
+.status.thinking .dot { background: var(--bad); }
+@keyframes pulse { 50% { opacity: .4; } }
+
+svg { width: 168px; height: 168px; }
+
+/* ---- 对话框 ---- */
+
+.chat-box {
+  background: var(--card);
+  border-radius: 20px;
+  padding: 14px;
+  height: 236px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .4);
+}
+
+.bubble {
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.bubble.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.bubble.assistant {
+  align-self: flex-start;
+  background: #2a2f55;
+  border-bottom-left-radius: 4px;
+}
+
+/* ---- 语音输入面板（对话框下方） ---- */
+
+.voice-panel {
+  background: var(--card);
+  border: 1px solid transparent;
+  border-radius: 18px;
+  padding: 12px 14px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .4);
+  opacity: .68;
+  transition: opacity .2s ease, border-color .2s ease;
+}
+.voice-panel.live { opacity: 1; border-color: rgba(108, 140, 255, .35); }
+.voice-panel.danger { border-color: rgba(248, 113, 113, .55); }
+
+.vp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.vp-status { display: flex; align-items: center; gap: 7px; }
+.vp-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5a6088;
+  flex: none;
+}
+.voice-panel.live .vp-dot { background: var(--warn); animation: pulse 1.2s infinite; }
+.voice-panel.danger .vp-dot { background: var(--bad); }
+.vp-timer {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.vp-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.vp-label {
+  flex: none;
+  width: 26px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.vp-track {
+  position: relative;
+  flex: 1;
+  height: 10px;
+  border-radius: 6px;
+  background: #252a4d;
+}
+.vp-track-countdown { overflow: hidden; }
+
+.vp-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 0;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--ok), var(--accent));
+  transition: width .06s linear;
+}
+.vp-peak {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: rgba(232, 234, 246, .85);
+  opacity: .7;
+  transition: left .08s linear;
+}
+.vp-threshold {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: 36%;
+  width: 2px;
+  border-radius: 2px;
+  background: rgba(232, 234, 246, .45);
+}
+.vp-threshold span {
+  position: absolute;
+  bottom: calc(100% + 1px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.vp-countdown {
+  width: 100%;
+  background: #2f3560;
+  transition: width .06s linear, background .2s ease;
+}
+.voice-panel[data-state="speaking"] .vp-countdown {
+  background: linear-gradient(90deg, var(--ok), var(--accent));
+}
+.voice-panel[data-state="counting"] .vp-countdown {
+  background: linear-gradient(90deg, var(--warn), var(--bad));
+}
+.voice-panel[data-state="idle"] .vp-countdown,
+.voice-panel[data-state="requesting"] .vp-countdown,
+.voice-panel[data-state="recognizing"] .vp-countdown {
+  background: #2f3560;
+}
+/* 数字人说话时：监听人声，开口即打断 */
+.voice-panel[data-state="monitoring"] .vp-dot { background: var(--accent); animation: pulse 1.2s infinite; }
+.voice-panel[data-state="monitoring"] .vp-countdown {
+  background: linear-gradient(90deg, rgba(108, 140, 255, .38), rgba(108, 140, 255, .16));
+}
+.voice-panel[data-state="barged"] .vp-dot { background: var(--bad); }
+
+.vp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+#vpHint {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}
+.vp-slider {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+.vp-slider input[type="range"] {
+  width: 80px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+#vpSilenceValue {
+  width: 30px;
+  text-align: right;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 输入行 ---- */
+
+.input-row {
+  display: flex;
+  gap: 10px;
+}
+input[type="text"] {
+  flex: 1;
+  padding: 13px 16px;
+  border: none;
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+input[type="text"]::placeholder { color: var(--muted); }
+button {
+  padding: 13px 18px;
+  border: none;
+  border-radius: 14px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+button:hover { opacity: .85; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button#mic { background: #3a3f63; font-size: 16px; }
+button#mic.recording { background: var(--bad); }
+
+@media (max-width: 420px) {
+  body { padding: 12px; }
+  .chat-box { height: 200px; }
+  .vp-slider input[type="range"] { width: 64px; }
+}

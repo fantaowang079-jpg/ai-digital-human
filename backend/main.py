@@ -82,7 +82,12 @@ def stt(req: STTRequest):
     if len(audio_bytes) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="音频过大，请缩短录音")
 
-    text = stt_provider.transcribe(audio_bytes)
+    try:
+        text = stt_provider.transcribe(audio_bytes)
+    except Exception:
+        # 音频解码失败、模型加载失败等都转成明确的上游错误，避免裸 500
+        logger.exception("stt failed")
+        raise HTTPException(status_code=502, detail="语音识别失败，请重试")
     return {"text": text}
 
 
@@ -124,6 +129,23 @@ def health():
         "llm_provider": config.llm_provider,
         "tts_provider": config.tts_provider,
         "stt_provider": config.stt_provider,
+    }
+
+
+@app.get("/api/voice/config")
+def voice_config():
+    """语音输入面板参数：前端启动时读取，判定时间条范围/默认值以后端为准。"""
+    return {
+        "vad_threshold": config.vad_threshold,
+        "display_max_rms": config.display_max_rms,
+        "silence_ms": config.silence_ms,
+        "silence_ms_min": config.silence_ms_min,
+        "silence_ms_max": config.silence_ms_max,
+        "max_record_ms": config.max_record_ms,
+        "idle_timeout_ms": config.idle_timeout_ms,
+        "barge_in_threshold": config.barge_in_threshold,
+        "barge_in_hold_ms": config.barge_in_hold_ms,
+        "barge_in_guard_ms": config.barge_in_guard_ms,
     }
 
 
