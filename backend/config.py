@@ -2,6 +2,9 @@
 import os
 from dataclasses import dataclass
 
+# 项目根目录（backend 的上一级）
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 @dataclass
 class Config:
@@ -18,6 +21,7 @@ class Config:
     # STT 配置
     stt_provider: str = "faster-whisper"
     stt_model_size: str = "base"        # tiny/base/small/medium/large
+    stt_model_path: str = ""            # 本地模型目录；为空时按 model_size 在线下载/查缓存
     stt_language: str = "zh"            # 中文识别，避免模型误判语种
     stt_beam_size: int = 5              # 5 比原版 1 更准，CPU 下延迟可接受
     stt_initial_prompt: str = "以下是普通话的句子，请用简体中文输出。"
@@ -58,8 +62,21 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _resolve_model_path(model_size: str) -> str:
+    """优先使用包内内置模型，其次使用 STT_MODEL_PATH；都没有则返回空串（走在线下载）。"""
+    env_path = os.getenv("STT_MODEL_PATH", "").strip()
+    if env_path:
+        if not os.path.isabs(env_path):
+            env_path = os.path.join(PROJECT_ROOT, env_path)
+        return env_path if os.path.isdir(env_path) else ""
+
+    bundled = os.path.join(PROJECT_ROOT, "models", f"faster-whisper-{model_size}")
+    return bundled if os.path.isdir(bundled) else ""
+
+
 def load_config() -> Config:
     """从环境变量读取配置，未设置时使用默认值。"""
+    model_size = os.getenv("STT_MODEL_SIZE", "base")
     return Config(
         llm_provider=os.getenv("LLM_PROVIDER", "mock"),
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
@@ -68,7 +85,8 @@ def load_config() -> Config:
         tts_provider=os.getenv("TTS_PROVIDER", "edge"),
         tts_voice=os.getenv("TTS_VOICE", "zh-CN-XiaoxiaoNeural"),
         stt_provider=os.getenv("STT_PROVIDER", "faster-whisper"),
-        stt_model_size=os.getenv("STT_MODEL_SIZE", "base"),
+        stt_model_size=model_size,
+        stt_model_path=_resolve_model_path(model_size),
         stt_language=os.getenv("STT_LANGUAGE", "zh"),
         stt_beam_size=_env_int("STT_BEAM_SIZE", 5),
         stt_initial_prompt=os.getenv(

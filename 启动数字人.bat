@@ -21,12 +21,27 @@ goto findport
 :portfound
 echo Starting AI Digital Human on port %PORT% ...
 start "AI Digital Human Server" "%~dp0run_server.bat"
-timeout /t 4 /nobreak >nul 2>&1
+
+rem Wait until the server is actually listening before opening the browser
+set /a WAIT=0
+:waitready
+netstat -ano | findstr /R /C:":%PORT% " | findstr /I "LISTENING" >nul 2>&1
+if not errorlevel 1 goto ready
+set /a WAIT+=1
+if %WAIT% GEQ 30 goto slow
+timeout /t 1 /nobreak >nul 2>&1
+goto waitready
+
+:slow
+echo Server is taking longer than 30 seconds. Check the server window for errors.
+
+:ready
 start "" "http://localhost:%PORT%"
 echo.
 echo ==========================================
 echo   AI Digital Human
 echo   Browser: http://localhost:%PORT%
+echo   First visit: read the guide, then click Start.
 echo   Close the server window to stop.
 echo ==========================================
 echo.

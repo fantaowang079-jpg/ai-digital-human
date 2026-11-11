@@ -14,6 +14,10 @@
   const mouth = document.getElementById("mouth");
   const eyeL = document.getElementById("eyeL");
   const eyeR = document.getElementById("eyeR");
+  const guideBtn = document.getElementById("guideBtn");
+  const guideModal = document.getElementById("guideModal");
+  const guideClose = document.getElementById("guideClose");
+  const guideStart = document.getElementById("guideStart");
 
   let messages = [];
   let audioCtx = null;
@@ -463,6 +467,49 @@
     if (conversationMode) exitConversation();
   }
 
+  // ---- 使用说明 ----
+
+  const GUIDE_SEEN_KEY = "digitalHuman.guideSeen";
+
+  function openGuide() {
+    guideModal.hidden = false;
+    document.body.classList.add("modal-open");
+    if (guideStart) guideStart.focus();
+  }
+
+  function closeGuide() {
+    guideModal.hidden = true;
+    document.body.classList.remove("modal-open");
+    try {
+      localStorage.setItem(GUIDE_SEEN_KEY, "1");
+    } catch (e) {
+      /* localStorage 不可用时每次打开都显示，不影响使用 */
+    }
+    if (guideBtn) guideBtn.focus();
+  }
+
+  function bindGuide() {
+    if (!guideModal) return;
+    if (guideBtn) guideBtn.addEventListener("click", openGuide);
+    if (guideClose) guideClose.addEventListener("click", closeGuide);
+    if (guideStart) guideStart.addEventListener("click", closeGuide);
+    guideModal.addEventListener("click", (e) => {
+      if (e.target === guideModal) closeGuide();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !guideModal.hidden) closeGuide();
+    });
+
+    // 首次打开（每个浏览器端口第一次）自动展示步骤
+    let seen = false;
+    try {
+      seen = localStorage.getItem(GUIDE_SEEN_KEY) === "1";
+    } catch (e) {
+      /* 忽略 */
+    }
+    if (!seen) openGuide();
+  }
+
   // ---- 启动 ----
 
   async function loadVoiceConfig() {
@@ -502,5 +549,6 @@
   });
   micBtn.addEventListener("click", toggleRecording);
 
+  bindGuide();
   boot();
 })();

@@ -15,6 +15,8 @@
 5. **流式低延迟**：LLM 边生成、边分句、边 TTS，逐句返回，首句即播，显著降低首字延迟。
 6. **无 GPU 依赖**：LLM、TTS 走 API，口型用 Web Audio 实时驱动，普通电脑即可运行。
 7. **多轮对话**：前端维护对话历史，后端统一注入数字人角色设定（system prompt）。
+8. **开箱即用**：便携包内置 Python 运行时与 Faster-Whisper base 模型，解压后双击
+   `start.bat` 即可；页面首次打开自带分步「使用说明」，右上角可随时再看。
 
 ## 🏗️ 架构
 
@@ -61,7 +63,8 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000
 > **想接入真实大模型**：编辑 `.env`，把 `LLM_PROVIDER=deepseek` 并填入 `DEEPSEEK_API_KEY`，重启即可。
 >
 > **首次语音识别**会通过 hf-mirror 下载 Faster-Whisper `base` 模型（约 150MB），请耐心等待；
-> 之后复用本地缓存，不再联网。
+> 之后复用本地缓存，不再联网。便携测试包已内置 `models/faster-whisper-base/`，
+> 开箱即可离线识别；该目录不提交到 Git 仓库（见 `.gitignore`）。
 
 ### 安全说明
 
@@ -92,10 +95,11 @@ digital-human/
 │       ├── tts.py          #   EdgeTTSProvider
 │       └── stt.py          #   FasterWhisperSTTProvider
 ├── frontend/
-│   ├── index.html          # 页面结构：数字人 + 对话框 + 语音面板
+│   ├── index.html          # 页面结构：数字人 + 对话框 + 语音面板 + 使用说明弹窗
 │   ├── styles.css          # 样式
-│   ├── voice-panel.js      # 语音面板：麦克风 / 音量条 / 判定时间条
-│   └── app.js              # 对话、流式回复、音频播放与口型
+│   ├── voice-panel.js      # 语音面板：麦克风 / 音量条 / 判定时间条 / 打断监听
+│   └── app.js              # 对话、流式回复、音频播放、口型与使用说明
+├── models/                 # 内置识别模型（仅便携包，已 gitignore）
 ├── tests/                  # 流式协议、STT 与语音面板参数回归测试
 ├── requirements.txt
 └── .env.example

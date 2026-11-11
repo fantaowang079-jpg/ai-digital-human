@@ -22,3 +22,6 @@ Thumbs.db
 logs/
 data/
 knowledge/
+
+# 内置语音识别模型（约 142MB，只放进便携包，不进 Git 仓库）
+models/

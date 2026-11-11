@@ -9,6 +9,7 @@
 <body>
   <div class="app">
     <div class="avatar-card">
+      <button class="guide-btn" id="guideBtn" type="button">使用说明</button>
       <div class="status" id="status"><span class="dot"></span>待机中</div>
       <!-- 数字人 SVG 形象：眼睛会眨眼，嘴巴随语音音量开合 -->
       <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -69,6 +70,54 @@
       <button id="mic" title="语音输入">🎤</button>
       <input id="input" type="text" placeholder="打字或点🎤说话…" />
       <button id="send">发送</button>
+    </div>
+  </div>
+
+  <!-- 使用说明：首次打开自动显示，右上角按钮可再次查看 -->
+  <div class="modal-mask" id="guideModal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="guideTitle">
+      <div class="modal-head">
+        <h2 id="guideTitle">使用说明</h2>
+        <button class="modal-close" id="guideClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <ol class="guide-steps">
+          <li>
+            <b>开始对话</b>
+            <p>在下方输入框打字，或点 🎤 用语音说话。</p>
+          </li>
+          <li>
+            <b>允许麦克风</b>
+            <p>第一次点 🎤 时浏览器会询问权限，请点「允许」。请使用
+              <code>http://localhost:端口</code> 访问，局域网 IP 下浏览器会禁用麦克风。</p>
+          </li>
+          <li>
+            <b>说完停顿即可发送</b>
+            <p>对话框下方「音量」条显示麦克风音量；「判定」条在你停止说话后开始缩短，
+              走完会自动识别并发送。右下角「停顿」可调 1–4 秒。</p>
+          </li>
+          <li>
+            <b>随时打断</b>
+            <p>数字人说话时面板会显示「监听中」，此时直接开口即可打断；
+              也可以点 ⏹ 停止播报。</p>
+          </li>
+          <li>
+            <b>接入真实大模型（可选）</b>
+            <p>默认是 Mock 模式（占位回复）。关闭服务器窗口，用记事本打开
+              <code>.env</code>，设置 <code>LLM_PROVIDER=deepseek</code> 并填入自己的
+              <code>DEEPSEEK_API_KEY</code>，保存后重新启动。</p>
+          </li>
+          <li>
+            <b>常见问题</b>
+            <p>首次语音识别需要加载模型，等几秒属正常；外放音箱若出现自己打断自己，
+              建议戴耳机或把 <code>.env</code> 的 <code>BARGE_IN_THRESHOLD</code> 调高到
+              0.04–0.05；更多排查见文件夹里的「使用说明.txt」。</p>
+          </li>
+        </ol>
+      </div>
+      <div class="modal-foot">
+        <button id="guideStart" type="button">开始使用</button>
+      </div>
     </div>
   </div>
 
