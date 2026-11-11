@@ -3,6 +3,7 @@ import base64
 import binascii
 import json
 import logging
+import logging.handlers
 import os
 import re
 from typing import Literal
@@ -24,9 +25,40 @@ from backend.providers.tts import get_tts_provider
 # 项目根目录（backend 的上一级）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
 load_dotenv(ENV_PATH)
 
+# 日志同时写控制台和 logs/app.log，方便对方把问题日志发回来
+logger = logging.getLogger("digital_human")
+logger.setLevel(logging.INFO)
+_log_file = os.path.join(LOG_DIR, "app.log")
+if not any(
+    isinstance(handler, logging.handlers.RotatingFileHandler)
+    and os.path.abspath(getattr(handler, "baseFilename", ""))
+    == os.path.abspath(_log_file)
+    for handler in logger.handlers
+):
+    _file_handler = logging.handlers.RotatingFileHandler(
+        _log_file,
+        maxBytes=1_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    _file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    logger.addHandler(_file_handler)
+    logging.getLogger("uvicorn.error").addHandler(_file_handler)
+
 config = load_config()
+logger.info(
+    "应用启动：%s | LLM=%s | KB=%s | Memory=%s",
+    BASE_DIR,
+    config.llm_provider,
+    config.kb_enabled,
+    config.memory_enabled,
+)
 
 # 知识库目录：KB_DIR 为空时用项目根目录下的 knowledge/
 kb_dir = config.kb_dir or os.path.join(BASE_DIR, "knowledge")
@@ -128,8 +160,6 @@ def _update_env_file(values: dict[str, str]) -> None:
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write("\n".join(output) + "\n")
     os.replace(tmp, ENV_PATH)
-
-logger = logging.getLogger("digital_human")
 
 app = FastAPI(title="AI 数字人对话系统", version="0.1.0")
 

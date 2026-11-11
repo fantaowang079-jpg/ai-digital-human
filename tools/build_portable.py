@@ -7,8 +7,8 @@
     dist/ai-digital-human-windows.zip
 
 包内自带 Python 3.12 embeddable 与全部运行依赖，对方解压后双击
-「启动数字人.bat」即可，不需要安装 Python；首次打开按页面提示填写自己的
-DeepSeek API Key。
+start.bat（或 启动数字人.bat）即可，不需要安装 Python；首次打开按页面提示填写
+自己的 DeepSeek API Key。
 """
 from __future__ import annotations
 
@@ -31,21 +31,63 @@ CACHE = DIST / "cache"
 OUT_ZIP = DIST / f"{PKG_NAME}.zip"
 
 LAUNCHER = r"""@echo off
-setlocal
+setlocal EnableExtensions
 cd /d "%~dp0"
-if not exist ".env" copy /y ".env.example" ".env" >nul
-echo Starting AI Digital Human...
+
+if not exist "python\python.exe" goto missing
+if not exist "backend\main.py" goto missing
+if not exist "run_server.bat" goto missing
+if not exist "frontend\index.html" goto missing
+
+if not exist ".env" copy /y ".env.example" ".env" >nul 2>&1
+if not exist "logs" mkdir "logs" >nul 2>&1
+
+set "PORT=8000"
+:findport
+netstat -ano | findstr /R /C:":%PORT% " | findstr /I "LISTENING" >nul 2>&1
+if errorlevel 1 goto portfound
+set /a PORT+=1
+if %PORT% GTR 8010 goto noport
+goto findport
+
+:portfound
+echo Starting AI Digital Human on port %PORT% ...
 start "AI Digital Human Server" "%~dp0run_server.bat"
-timeout /t 4 /nobreak >nul
-start "" http://localhost:8000
+timeout /t 4 /nobreak >nul 2>&1
+start "" "http://localhost:%PORT%"
 echo.
 echo ==========================================
 echo   AI Digital Human
-echo   Browser: http://localhost:8000
+echo   Browser: http://localhost:%PORT%
 echo   Close the server window to stop.
 echo ==========================================
 echo.
 pause
+exit /b 0
+
+:missing
+echo.
+echo ERROR: Required files are missing.
+echo Please EXTRACT THE WHOLE ZIP first, then run this file.
+echo Do NOT run it directly inside the zip preview.
+echo If antivirus removed files, restore them or whitelist this folder.
+echo.
+echo Current folder: %CD%
+if not exist "python\python.exe" echo   MISSING: python\python.exe
+if not exist "backend\main.py" echo   MISSING: backend\main.py
+if not exist "run_server.bat" echo   MISSING: run_server.bat
+if not exist "frontend\index.html" echo   MISSING: frontend\index.html
+echo.
+echo Run diagnose.bat and send the logs folder to the developer.
+pause
+exit /b 1
+
+:noport
+echo.
+echo ERROR: Ports 8000-8010 are all in use.
+echo Close other programs and try again.
+pause
+exit /b 1
 """
 
 RUN_SERVER = r"""@echo off
@@ -53,22 +95,68 @@ cd /d "%~dp0"
 chcp 65001 >nul
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
-echo AI Digital Human server is running.
+if not defined PORT set "PORT=8000"
+if not exist "logs" mkdir "logs" >nul 2>&1
+echo AI Digital Human server is starting on port %PORT% ...
 echo Keep this window open. Press Ctrl+C to stop.
 echo.
-"%~dp0python\python.exe" -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+"%~dp0python\python.exe" -m uvicorn backend.main:app --host 127.0.0.1 --port %PORT%
 echo.
-echo Server stopped.
+echo Server stopped. Check logs\app.log for details.
+pause
+"""
+
+DIAGNOSE = r"""@echo off
+setlocal EnableExtensions
+chcp 65001 >nul
+cd /d "%~dp0"
+if not exist "logs" mkdir "logs" >nul 2>&1
+set "OUT=%~dp0logs\diagnose.txt"
+> "%OUT%" 2>&1 (
+  echo AI Digital Human diagnostic report
+  echo Date: %DATE% %TIME%
+  echo Folder: %CD%
+  echo.
+  echo [Files]
+  if exist "python\python.exe" (echo python\python.exe: OK) else (echo python\python.exe: MISSING)
+  if exist "backend\main.py" (echo backend\main.py: OK) else (echo backend\main.py: MISSING)
+  if exist "frontend\index.html" (echo frontend\index.html: OK) else (echo frontend\index.html: MISSING)
+  if exist "run_server.bat" (echo run_server.bat: OK) else (echo run_server.bat: MISSING)
+  if exist "start.bat" (echo start.bat: OK) else (echo start.bat: MISSING)
+  if exist ".env" (echo .env: present) else (echo .env: missing)
+  echo.
+  echo [Python]
+  if exist "python\python.exe" ("python\python.exe" --version) else (echo Python: MISSING)
+  echo.
+  echo [Listening ports 8000-8010]
+  for %%P in (8000 8001 8002 8003 8004 8005 8006 8007 8008 8009 8010) do (
+    netstat -ano | findstr /R /C:":%%P " | findstr /I "LISTENING"
+  )
+  echo.
+  echo [App log]
+  if exist "logs\app.log" (
+    echo logs\app.log is present. Please send the whole logs folder.
+  ) else (
+    echo app.log: not found
+  )
+)
+type "%OUT%"
+echo.
+echo Report saved to: %OUT%
+echo Send the whole logs folder to the developer.
 pause
 """
 
 INSTRUCTIONS = """AI 数字人 Windows 便携版
 ========================
 
-1. 将整个文件夹解压到桌面或文档目录（不要放在 Program Files，可能没有写权限）。
-2. 双击「启动数字人.bat」。
-3. 浏览器会自动打开 http://localhost:8000 。
-4. 首次使用请按页面提示粘贴自己的 DeepSeek API Key：
+【第一次使用】
+1. 把整个 zip 完整解压到桌面或文档目录（不要放 Program Files）。
+   - 不要直接在压缩包预览里双击 .bat。
+2. 进入解压后的文件夹，双击 start.bat（或 启动数字人.bat）。
+3. 浏览器会自动打开；如果没打开，按黑窗口显示的地址手动访问，
+   通常是 http://localhost:8000 。
+4. 首次使用按页面提示粘贴自己的 DeepSeek API Key：
    - Key 只保存在本机 .env 文件里，不会上传。
    - 没有 Key 可以点「先试用 Mock 模式」，界面、语音和知识库仍可体验。
    - 获取 Key：https://platform.deepseek.com/api_keys
@@ -76,6 +164,22 @@ INSTRUCTIONS = """AI 数字人 Windows 便携版
 6. 首次说话会下载 Faster-Whisper 语音识别模型（约 150MB），需要联网。
 7. 需要联网：DeepSeek 对话、Edge-TTS 语音合成；知识库与上下文记忆都在本地。
 8. 如果 Windows 提示「未知发布者」，这是本地脚本，选择仍要运行即可。
+
+【遇到问题】
+- 提示「系统找不到指定的路径」：
+  1) 确认已经完整解压，而不是在 zip 里直接运行；
+  2) 确认 python\\python.exe、backend\\main.py、run_server.bat 存在；
+  3) 杀毒软件可能隔离了文件，恢复或加入白名单后重新解压；
+  4) 双击 diagnose.bat，把生成的 logs 文件夹发回。
+- 页面显示「后端未连接」：看服务器黑窗口是否还在；看 logs\\app.log。
+- 端口被占用：启动器会自动尝试 8000~8010，以窗口显示的端口为准。
+- 首次说话没反应：需要联网下载语音识别模型（约 150MB），稍等。
+- Windows 提示未知发布者：本地脚本没有签名，选择「仍要运行」。
+
+【日志】
+- logs\\diagnose.txt：环境/文件/端口诊断
+- logs\\app.log：应用错误日志
+- 反馈问题时请附上 logs 文件夹，但不要发送 .env（里面有 Key）。
 """
 
 
@@ -181,7 +285,13 @@ def main() -> None:
     print("[copy] 应用代码")
     copytree(ROOT / "backend", PKG / "backend")
     copytree(ROOT / "frontend", PKG / "frontend")
-    for name in ("README.md", ".env.example", "requirements.txt", "LICENSE"):
+    for name in (
+        "README.md",
+        ".env.example",
+        "requirements.txt",
+        "LICENSE",
+        "BUGLOG.md",
+    ):
         source = ROOT / name
         if source.exists():
             shutil.copy2(source, PKG / name)
@@ -193,8 +303,10 @@ def main() -> None:
     if sample.exists():
         shutil.copy2(sample, knowledge / sample.name)
 
+    write_windows_text(PKG / "start.bat", LAUNCHER)
     write_windows_text(PKG / "启动数字人.bat", LAUNCHER)
     write_windows_text(PKG / "run_server.bat", RUN_SERVER)
+    write_windows_text(PKG / "diagnose.bat", DIAGNOSE)
     write_windows_text(PKG / "使用说明.txt", INSTRUCTIONS, encoding="utf-8-sig")
 
     print("[zip] 压缩分发包")

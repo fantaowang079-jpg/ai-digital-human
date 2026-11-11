@@ -81,15 +81,19 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000
 
 产物是 `dist/ai-digital-human-windows.zip`。对方只需要：
 
-1. 解压到桌面或文档目录（不要放在 `Program Files`，可能没有写权限）。
-2. 双击 `启动数字人.bat`。
-3. 浏览器自动打开 `http://localhost:8000`。
+1. **完整解压**到桌面或文档目录（不要放在 `Program Files`，不要在压缩包预览里直接运行）。
+2. 双击 `start.bat`（或 `启动数字人.bat`）。
+3. 浏览器自动打开；如果没打开，按黑窗口显示的端口手动访问（通常是 `http://localhost:8000`）。
 4. 首次使用按页面提示粘贴自己的 DeepSeek API Key（只保存在本机 `.env`，不会上传）；
    没有 Key 可以点「先试用 Mock 模式」体验界面和语音。
 
 包内自带 Python 3.12 embeddable 与全部运行依赖，**不需要安装 Python**；只包含示例
 知识库，不会打包你本地的文档、记忆或 API Key。首次使用麦克风会下载 Faster-Whisper
 模型（约 150MB），需要联网；DeepSeek 对话和 Edge-TTS 也需要联网，知识库与记忆在本地。
+
+**遇到「系统找不到指定的路径」**：通常是没完整解压、直接在 zip 里双击，或杀毒软件
+隔离了 `python\python.exe`。先双击 `diagnose.bat`，把 `logs` 文件夹发回；常见问题
+和处理方法见 [BUGLOG.md](BUGLOG.md)。
 
 ## 🎭 两种模式
 
