@@ -1,0 +1,84 @@
+﻿AI 数字人 · 启动失败解决方案
+============================
+
+一、先确认你下载的是哪个包
+--------------------------
+1. ai-digital-human-master
+   这是「源码包」（仓库首页点“下载 ZIP”得到的）。
+   它不包含 Python 环境和依赖，不能直接双击启动，
+   否则会提示“系统找不到指定的路径”。
+
+2. ai-digital-human-windows
+   这是「便携包」（Release 里的 zip 附件）。
+   解压后双击 start.bat（或 启动数字人.bat）即可，不需要安装 Python。
+
+二、最快解决：下载便携包
+------------------------
+Gitee Release（附件由维护者上传后可用）：
+  https://gitee.com/zjlhslyjsf0036/ai-digital-human/releases
+
+GitHub Release（备用）：
+  https://github.com/fantaowang079-jpg/ai-digital-human/releases/latest
+
+步骤：
+  1. 下载 ai-digital-human-windows.zip
+  2. 完整解压到桌面或文档目录（不要直接在压缩包预览里双击）
+  3. 双击 start.bat（或 启动数字人.bat）
+  4. 首次使用按页面提示填写自己的 DeepSeek API Key
+     - 没有 Key 可以点“先试用 Mock 模式”
+     - 获取 Key：https://platform.deepseek.com/api_keys
+
+三、如果你确实要运行源码包
+--------------------------
+在 E:\ai-digital-human-master 打开 cmd，依次执行：
+
+  python -m venv .venv
+  .venv\Scripts\activate
+  pip install -r requirements.txt
+  copy .env.example .env
+  notepad .env
+
+在 .env 里设置：
+  LLM_PROVIDER=deepseek
+  DEEPSEEK_API_KEY=sk-你的Key
+
+然后：
+  .venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+
+浏览器打开 http://localhost:8000 。
+
+没有 Key 也可以把 LLM_PROVIDER 保持为 mock，先跑通界面和语音。
+
+四、“搜不到大模型”是什么意思
+----------------------------
+本项目不包含本地大模型文件。
+数字人的“大脑”是 DeepSeek 云端 API，通过 API Key 调用，不需要下载模型。
+
+- 源码包默认 LLM_PROVIDER=mock，所以只能返回 Mock 内容；
+- 配置 DEEPSEEK_API_KEY 并把 LLM_PROVIDER 改成 deepseek 后才会调用真实模型；
+- 便携包首次打开会弹窗让你填 Key；
+- 填了 Key 仍失败：检查 Key 是否以 sk- 开头、账户是否有余额、
+  网络是否能访问 api.deepseek.com，并查看 logs\app.log。
+
+五、便携包启动失败的排查
+------------------------
+1. 必须完整解压整个 zip，不要直接在压缩包预览里双击 .bat。
+2. 确认这些文件存在：
+   python\python.exe
+   backend\main.py
+   frontend\index.html
+   run_server.bat
+3. 杀毒软件可能隔离了 python.exe：从隔离区恢复，或把文件夹加入白名单后重新解压。
+4. 双击 diagnose.bat，会生成 logs\diagnose.txt（文件、Python、端口、日志）。
+5. 把整个 logs 文件夹发给开发者；不要发送 .env（里面有你的 API Key）。
+
+六、常见问题
+------------
+- 页面显示“后端未连接”：看黑色服务器窗口是否还在；按窗口显示的端口访问；
+  查看 logs\app.log。
+- 端口被占用：启动器会自动尝试 8000~8010，以窗口显示的
+  Browser: http://localhost:端口 为准。
+- 第一次说话没反应：需要联网下载语音识别模型（约 150MB），请稍等。
+- Windows 提示“未知发布者”：本地脚本没有代码签名，选择“仍要运行”。
+
+更详细的说明见使用指南.md 和 BUGLOG.md。
